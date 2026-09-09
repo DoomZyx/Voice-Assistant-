@@ -2,6 +2,15 @@
 
 Service vocal **local, modulaire et independant**. Fastify reste le backend metier (reservations, commandes, pricing, auth). Le LLM n'a **aucun acces direct a la base**. Toutes les actions passent par le Tool Dispatcher, qui appelle Fastify en HTTP.
 
+## Fallback GPT
+
+Deux niveaux, toujours prefixe **`FALLBACK GPT:`** dans les logs :
+
+1. **Appel entier (Fastify)** — Twilio reste sur `GET /media-stream` Fastify. Fastify sonde `VOICE_HEALTH_URL`. Si le Voice Service est injoignable ou `engines.ready` est faux, Fastify branche OpenAI Realtime (`path: openai-realtime`).
+2. **LLM seulement (Voice Service)** — STT/TTS locaux restent actifs. Si vLLM refuse une completion et `LLM_FALLBACK_GPT=true` + `OPENAI_API_KEY`, bascule OpenAI Chat Completions (`gpt-4o-mini` par defaut).
+
+Ne pas pointer `VOICE_STREAM_URL` directement sur le port Python : le fallback Realtime de Fastify ne s'executerait plus.
+
 ## Flux V1
 
 ```
@@ -133,12 +142,12 @@ Au premier demarrage, Silero et Kokoro sont telecharges dans `~/.cache/mysmartfo
 
 - Le prompt vocal du Voice Service est encore minimal (`app/prompts.py`). Le menu Pricing Fastify n'est pas injecte.
 - La fin d'appel ne declenche plus l'extraction Fastify (`TranscriptionHandler`). A brancher ensuite via un POST metier si besoin.
-- `GET /media-stream` OpenAI dans Fastify n'est plus utilise des que `VOICE_STREAM_URL` pointe ici. Les handlers OpenAI restent en place, non supprimes.
+- Fastify `/media-stream` proxy vers le Voice Service si `/health` est pret, sinon **FALLBACK GPT** OpenAI Realtime. Les handlers OpenAI restent en place pour ce fallback.
 - Python 3.11 ou 3.12 recommande pour faster-whisper et Kokoro.
 
-## Test d'un appel Twilio (Voice Service uniquement)
+## Test d'un appel Twilio
 
-Le webhook Fastify `/incoming-call` reste le TwiML. Le stream audio doit viser `VOICE_STREAM_URL` (ex. `wss://host/media-stream` du Voice Service), jamais OpenAI.
+Le webhook Fastify `/incoming-call` reste le TwiML. Le Stream Twilio doit viser Fastify (`wss://{PUBLIC_HOST}/media-stream`), pas le port Python : Fastify proxy vers le Voice Service, ou **FALLBACK GPT** OpenAI Realtime.
 
 Simulation protocole Twilio (sans reseau) :
 

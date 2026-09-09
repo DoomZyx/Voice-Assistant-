@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     vllm_model: str = "llama-3.1-8b-instruct"
     vllm_api_key: str = ""
     hf_token: str = ""
+    llm_fallback_gpt: bool = True
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
     llm_temperature: float = 0.3
     llm_max_tokens: int = 400
     llm_max_tool_rounds: int = 4

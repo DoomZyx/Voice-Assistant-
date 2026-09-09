@@ -86,6 +86,7 @@ def create_app(
                 "ready": engines_ok,
                 "error": voice.engine_error,
                 "llm": settings.llm_provider,
+                "llm_fallback_gpt": bool(settings.llm_fallback_gpt),
             },
             "sessions_active": sessions.active_count if sessions is not None else 0,
         }
@@ -145,7 +146,21 @@ async def _log_vllm_model(voice: VoiceRuntime, settings: Settings) -> None:
     try:
         served = await list_models()
     except Exception as exc:
-        logger.warning("step=vllm.models_unreachable error=%s", exc)
+        has_gpt = getattr(voice.llm, "_fallback", None) is not None
+        if has_gpt:
+            logger.warning(
+                "FALLBACK GPT: vLLM injoignable au demarrage reason=%s. "
+                "Completions via OpenAI Chat Completions.",
+                exc,
+            )
+            return
+        logger.warning(
+            "FALLBACK GPT: vLLM injoignable et fallback LLM inactif (OPENAI_API_KEY vide). "
+            "Fastify pourra basculer l appel vers OpenAI Realtime. reason=%s",
+            exc,
+        )
+        voice.engines_ready = False
+        voice.engine_error = "vLLM injoignable, fallback LLM inactif"
         return
     from app.llm.vllm import model_id_error
 
@@ -172,7 +187,7 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
             engine_error="VOICE_EAGER_LOAD=false (mode test / demarrage leger)",
         )
     try:
-        from app.llm.vllm import build_llm
+        from app.llm.fallback import build_llm
         from app.stt.faster_whisper import FasterWhisperSTT
         from app.tts.kokoro import KokoroTTS
         from app.vad.silero import load_silero_model

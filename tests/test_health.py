@@ -36,4 +36,5 @@ def test_health_degraded_without_engines():
     body = response.json()
     assert body["status"] == "degraded"
     assert body["node"]["success"] is True
+    assert body["engines"]["llm_fallback_gpt"] is True
     assert body["sessions_active"] == 0
