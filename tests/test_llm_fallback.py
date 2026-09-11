@@ -5,6 +5,7 @@ from app.config import Settings
 from app.llm import LLMResult
 from app.llm.fallback import FallbackLLM
 from app.llm.vllm import VLLMProvider
+from app.telemetry import VoiceTelemetry
 
 
 @pytest.mark.asyncio
@@ -39,13 +40,17 @@ async def test_fallback_gpt_when_vllm_fails(caplog):
         ),
         client=httpx.AsyncClient(transport=transport, base_url="http://openai.test/v1"),
     )
-    llm = FallbackLLM(primary, fallback)
+    telemetry = VoiceTelemetry()
+    llm = FallbackLLM(primary, fallback, telemetry)
     caplog.set_level("WARNING")
     result = await llm.complete([{"role": "user", "content": "hi"}], [])
     assert isinstance(result, LLMResult)
     assert result.content == "ok gpt"
     assert llm.active_provider == "openai"
     assert any("FALLBACK GPT" in record.getMessage() for record in caplog.records)
+    snapshot = telemetry.snapshot()
+    assert snapshot["events"]["llm_provider_fallback"] == 1
+    assert snapshot["errors"]["llm_primary"] == 1
     await llm.aclose()
 
 

@@ -8,14 +8,21 @@ from typing import Any
 from app.config import Settings
 from app.llm import LLMResult
 from app.llm.vllm import VLLMProvider, build_llm as build_vllm_client
+from app.telemetry import VoiceTelemetry
 
 logger = logging.getLogger("mysmartfood-voice.llm")
 
 
 class FallbackLLM:
-    def __init__(self, primary: VLLMProvider, fallback: VLLMProvider | None) -> None:
+    def __init__(
+        self,
+        primary: VLLMProvider,
+        fallback: VLLMProvider | None,
+        telemetry: VoiceTelemetry | None = None,
+    ) -> None:
         self._primary = primary
         self._fallback = fallback
+        self._telemetry = telemetry
         self.active_provider = "vllm"
 
     async def aclose(self) -> None:
@@ -25,8 +32,12 @@ class FallbackLLM:
 
     async def list_models(self) -> list[str]:
         try:
-            return await self._primary.list_models()
+            models = await self._primary.list_models()
+            self.active_provider = "vllm"
+            return models
         except Exception as exc:
+            if self._fallback is not None:
+                self.active_provider = "openai"
             logger.warning("FALLBACK GPT: GET /models vLLM impossible reason=%s", exc)
             raise
 
@@ -40,21 +51,30 @@ class FallbackLLM:
             self.active_provider = "vllm"
             logger.info("step=llm.backend provider=vllm")
             return result
-        except Exception as exc:
+        except Exception:
+            if self._telemetry:
+                self._telemetry.record_error("llm_primary")
             if self._fallback is None:
-                logger.error("FALLBACK GPT: impossible (OPENAI_API_KEY absent ou desactive) reason=%s", exc)
+                logger.error("step=llm.provider_fallback unavailable=true FALLBACK GPT")
                 raise
-            logger.warning(
-                "FALLBACK GPT: vLLM indisponible, bascule OpenAI Chat Completions. reason=%s",
-                exc,
-            )
-            result = await self._fallback.complete(messages, tools)
-            self.active_provider = "openai"
-            logger.warning("FALLBACK GPT: reponse OpenAI recue provider=openai")
-            return result
+            logger.warning("step=llm.provider_fallback from=vllm to=openai FALLBACK GPT")
+            if self._telemetry:
+                self._telemetry.record_event("llm_provider_fallback")
+            try:
+                result = await self._fallback.complete(messages, tools)
+                self.active_provider = "openai"
+                logger.warning("step=llm.provider_active provider=openai FALLBACK GPT")
+                return result
+            except Exception:
+                if self._telemetry:
+                    self._telemetry.record_error("llm_fallback")
+                raise
 
 
-def build_llm(settings: Settings) -> VLLMProvider | FallbackLLM:
+def build_llm(
+    settings: Settings,
+    telemetry: VoiceTelemetry | None = None,
+) -> VLLMProvider | FallbackLLM:
     primary = build_vllm_client(settings)
     if not settings.llm_fallback_gpt:
         logger.info("step=llm.fallback_gpt enabled=false")
@@ -78,4 +98,4 @@ def build_llm(settings: Settings) -> VLLMProvider | FallbackLLM:
         "step=llm.fallback_gpt enabled=true openai_model=%s",
         settings.openai_model,
     )
-    return FallbackLLM(primary, fallback)
+    return FallbackLLM(primary, fallback, telemetry)

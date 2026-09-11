@@ -35,7 +35,7 @@ class VLLMProvider:
     async def list_models(self) -> list[str]:
         response = await self._client.get("/models")
         if response.status_code >= 400:
-            logger.error("vLLM GET /models HTTP %s: %s", response.status_code, response.text[:500])
+            logger.error("step=llm.models.error provider=vllm status=%s", response.status_code)
             response.raise_for_status()
         data = response.json()
         ids = []
@@ -60,7 +60,7 @@ class VLLMProvider:
             payload["tool_choice"] = "auto"
         response = await self._client.post("/chat/completions", json=payload)
         if response.status_code >= 400:
-            logger.error("vLLM HTTP %s: %s", response.status_code, response.text[:500])
+            logger.error("step=llm.completion.error provider=vllm status=%s", response.status_code)
             response.raise_for_status()
         data = response.json()
         message = (data.get("choices") or [{}])[0].get("message") or {}
