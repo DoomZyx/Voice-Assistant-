@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.session.call import CallSession
 
@@ -20,6 +20,9 @@ class SessionManager:
     def active_count(self) -> int:
         return len(self._sessions)
 
+    def sanitized_sessions(self) -> list[dict[str, Any]]:
+        return [session.sanitized_snapshot() for session in self._sessions.values()]
+
     def create(self, websocket) -> CallSession:
         session = CallSession(websocket, self._runtime)
         self._sessions[id(websocket)] = session
@@ -34,7 +37,7 @@ class SessionManager:
         try:
             await session.close(reason=reason)
         except Exception:
-            logger.exception("step=session.close.error stream=%s", session.stream_sid)
+            logger.error("step=session.close.error stream=%s", session.stream_sid)
         logger.info("step=session.removed reason=%s active=%s", reason, self.active_count)
 
     async def close_all(self) -> None:
@@ -44,6 +47,6 @@ class SessionManager:
             try:
                 await session.close(reason="shutdown")
             except Exception:
-                logger.exception("step=session.close.error stream=%s", session.stream_sid)
+                logger.error("step=session.close.error stream=%s", session.stream_sid)
         if sessions:
             logger.info("step=session.close_all count=%s", len(sessions))

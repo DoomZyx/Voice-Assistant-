@@ -23,10 +23,9 @@ class ToolDispatcher:
         else:
             result = {"success": False, "error": f"Fonction inconnue: {name}"}
         logger.info(
-            "step=tool.fastify name=%s success=%s error=%s",
+            "step=tool.fastify name=%s success=%s",
             name,
             result.get("success"),
-            result.get("error"),
         )
         return result
 

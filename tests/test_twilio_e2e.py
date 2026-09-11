@@ -45,13 +45,21 @@ def _start_msg() -> str:
                 "callSid": CALL_SID,
                 "tracks": ["inbound"],
                 "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
+                "customParameters": {
+                    "callerNumber": "+33612345678",
+                    "instanceId": "restaurant-e2e",
+                },
             },
         }
     )
 
 
 def _build_app(stt=None, llm=None, tts=None):
-    settings = Settings(voice_eager_load=False, greeting_text="Bonjour, je vous ecoute.")
+    settings = Settings(
+        voice_eager_load=False,
+        greeting_text="Bonjour, je vous ecoute.",
+        node_api_key="test-key",
+    )
     node = FakeNode()
     runtime = VoiceRuntime(
         settings=settings,
@@ -113,6 +121,8 @@ def test_twilio_call_e2e_stop_cleans_session(caplog):
         "step=twilio.ws.cleanup",
     ):
         assert step in text, f"log manquant: {step}"
+    assert "+33612345678" not in text
+    assert "0612345678" not in text
     assert runtime.stt.calls == 1
     assert "Pour quelle date ?" in runtime.tts.texts
 
@@ -124,6 +134,23 @@ def test_twilio_call_e2e_disconnect_without_stop_cleans_session():
             ws.send_text(_start_msg())
             _receive_media(ws, GREETING_FRAMES)
             assert app.state.sessions.active_count == 1
+            active = client.get(
+                "/monitoring",
+                headers={"x-api-key": "test-key"},
+            ).json()["active_sessions"]
+            assert active == [
+                {
+                    "streamSid": STREAM_SID,
+                    "callSid": CALL_SID,
+                    "instanceId": "restaurant-e2e",
+                    "stage": "listening",
+                    "duration_seconds": active[0]["duration_seconds"],
+                    "provider": "vllm",
+                    "last_error": None,
+                }
+            ]
+            assert "telephone" not in active[0]
+            assert "callerNumber" not in active[0]
         assert app.state.sessions.active_count == 0
 
 
