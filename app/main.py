@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import logging
+import secrets
+import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from app.config import Settings, apply_huggingface_token, get_settings
 from app.node_client import NodeApiClient, NodeApiError
 from app.runtime import VoiceRuntime
 from app.session.manager import SessionManager
+from app.telemetry import VoiceTelemetry
 from app.tools.dispatcher import ToolDispatcher
 
 logger = logging.getLogger("mysmartfood-voice")
@@ -66,30 +70,104 @@ def create_app(
         lifespan=lifespan,
     )
 
-    @app.get("/health")
-    async def health():
+    async def health_snapshot(
+        include_active_sessions: bool = False,
+    ) -> tuple[dict[str, Any], bool]:
         node = app.state.node
         voice: VoiceRuntime = app.state.runtime
+        node_started = time.perf_counter()
         try:
             ping = await node.ping()
-            node_ok = True
-        except Exception as exc:
-            ping = {"error": str(exc)}
+            node_ok = not isinstance(ping, dict) or ping.get("success") is not False
+        except Exception:
+            ping = {"error": "Node indisponible"}
             node_ok = False
-        engines_ok = voice.engines_ready
+            if voice.telemetry:
+                voice.telemetry.record_error("node")
+        finally:
+            if voice.telemetry:
+                voice.telemetry.record_latency(
+                    "node",
+                    int((time.perf_counter() - node_started) * 1000),
+                )
+        engine_states = voice.engine_states()
+        engines_ok = all(component["ready"] for component in engine_states.values())
         status = "ok" if node_ok and engines_ok else "degraded"
         sessions = getattr(app.state, "sessions", None)
-        return {
+        active_sessions = sessions.sanitized_sessions() if sessions is not None else []
+        telemetry_snapshot = voice.telemetry.snapshot() if voice.telemetry else {}
+        latency_by_component = telemetry_snapshot.get("latency_ms", {})
+        errors_by_component = telemetry_snapshot.get("errors", {})
+        components = {
+            "node": {
+                "ready": node_ok,
+                "status": "healthy" if node_ok else "unhealthy",
+                "error": None if node_ok else "unavailable",
+                "latencyMs": latency_by_component.get("node", {}).get("last"),
+                "errorCount": errors_by_component.get("node", 0),
+            },
+            **{
+                name: {
+                    "ready": state["ready"],
+                    "status": "healthy" if state["ready"] else "unhealthy",
+                    "error": None if state["ready"] else f"{name}_unavailable",
+                    "latencyMs": latency_by_component.get(name, {}).get("last"),
+                    "errorCount": errors_by_component.get(name, 0),
+                }
+                for name, state in engine_states.items()
+            },
+        }
+        active_llm_provider = voice.active_llm_provider
+        components["llm"]["provider"] = active_llm_provider
+        components["llm"]["model"] = (
+            settings.openai_model
+            if active_llm_provider == "openai"
+            else settings.vllm_model
+        )
+        payload: dict[str, Any] = {
             "status": status,
             "node": ping,
             "engines": {
                 "ready": engines_ok,
-                "error": voice.engine_error,
+                "error": None if engines_ok else "voice_engines_unavailable",
                 "llm": settings.llm_provider,
                 "llm_fallback_gpt": bool(settings.llm_fallback_gpt),
             },
-            "sessions_active": sessions.active_count if sessions is not None else 0,
+            "components": components,
+            "llm_provider_active": active_llm_provider,
+            "sessions_active": len(active_sessions),
+            "telemetry": telemetry_snapshot,
         }
+        if include_active_sessions:
+            payload["active_sessions"] = active_sessions
+        return payload, node_ok and engines_ok
+
+    @app.get("/live")
+    async def live():
+        return {"status": "ok"}
+
+    @app.get("/ready")
+    async def ready():
+        payload, is_ready = await health_snapshot()
+        return JSONResponse(payload, status_code=200 if is_ready else 503)
+
+    @app.get("/health")
+    async def health():
+        payload, _ = await health_snapshot()
+        return payload
+
+    @app.get("/monitoring")
+    async def monitoring(x_api_key: str | None = Header(default=None)):
+        configured_key = settings.node_api_key.strip()
+        provided_key = (x_api_key or "").strip()
+        if (
+            not configured_key
+            or not provided_key
+            or not secrets.compare_digest(configured_key, provided_key)
+        ):
+            raise HTTPException(status_code=401, detail="Clé API interne invalide")
+        payload, _ = await health_snapshot(include_active_sessions=True)
+        return payload
 
     @app.post("/v1/tools/check-availability")
     async def check_availability(body: AvailabilityQuery):
@@ -125,7 +203,7 @@ def create_app(
             logger.info("step=twilio.ws.disconnect stream=%s call=%s", session.stream_sid, session.call_sid)
         except Exception:
             close_reason = "error"
-            logger.exception("step=twilio.ws.error stream=%s call=%s", session.stream_sid, session.call_sid)
+            logger.error("step=twilio.ws.error stream=%s call=%s", session.stream_sid, session.call_sid)
         finally:
             await manager.close(websocket, reason=close_reason)
             logger.info(
@@ -161,12 +239,18 @@ async def _log_vllm_model(voice: VoiceRuntime, settings: Settings) -> None:
         )
         voice.engines_ready = False
         voice.engine_error = "vLLM injoignable, fallback LLM inactif"
+        if voice.component_errors is not None:
+            voice.component_errors["llm"] = voice.engine_error
         return
     from app.llm.vllm import model_id_error
 
     mismatch = model_id_error(settings.vllm_model, served)
     if mismatch:
         logger.error("step=vllm.model_mismatch %s", mismatch)
+        voice.engines_ready = False
+        voice.engine_error = "Modele vLLM configure indisponible"
+        if voice.component_errors is not None:
+            voice.component_errors["llm"] = voice.engine_error
     else:
         logger.info("step=vllm.model_ok model=%s served=%s", settings.vllm_model, served)
 
@@ -174,6 +258,7 @@ async def _log_vllm_model(voice: VoiceRuntime, settings: Settings) -> None:
 def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
     apply_huggingface_token(settings)
     dispatcher = ToolDispatcher(node)
+    telemetry = VoiceTelemetry()
     if not settings.voice_eager_load:
         return VoiceRuntime(
             settings=settings,
@@ -185,6 +270,7 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
             vad_model=None,
             engines_ready=False,
             engine_error="VOICE_EAGER_LOAD=false (mode test / demarrage leger)",
+            telemetry=telemetry,
         )
     try:
         from app.llm.fallback import build_llm
@@ -195,7 +281,7 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
         vad_model = load_silero_model(settings)
         stt = FasterWhisperSTT(settings)
         tts = KokoroTTS(settings)
-        llm = build_llm(settings)
+        llm = build_llm(settings, telemetry)
         logger.info("moteurs vocaux precharges")
         return VoiceRuntime(
             settings=settings,
@@ -206,6 +292,7 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
             tts=tts,
             vad_model=vad_model,
             engines_ready=True,
+            telemetry=telemetry,
         )
     except Exception as exc:
         logger.exception("chargement moteurs vocal echoue")
@@ -219,6 +306,7 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
             vad_model=None,
             engines_ready=False,
             engine_error=str(exc),
+            telemetry=telemetry,
         )
 
 
