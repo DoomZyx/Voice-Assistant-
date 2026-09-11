@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -38,6 +39,17 @@ class NodeApiClient:
         response = await self._client.get("/api/ping")
         self._raise_for_status(response, "ping Node")
         return response.json()
+
+    async def get_voice_context(self, instance_id: str) -> dict[str, Any]:
+        safe_instance_id = quote(instance_id, safe="")
+        response = await self._client.get(
+            f"/api/voice/context/{safe_instance_id}",
+        )
+        self._raise_for_status(response, "contexte vocal")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            raise NodeApiError("Contexte vocal invalide", response.status_code, payload)
+        return payload["data"]
 
     async def check_availability(self, date: str) -> dict[str, Any]:
         orders, reservations = await asyncio.gather(

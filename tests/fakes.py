@@ -83,6 +83,10 @@ class FakeNode:
     def __init__(self) -> None:
         self.availability_calls: list[str] = []
         self.appointments: list[dict] = []
+        self.voice_contexts: dict[str, dict] = {}
+
+    async def get_voice_context(self, instance_id: str) -> dict:
+        return self.voice_contexts.get(instance_id, {})
 
     async def check_availability(self, date: str) -> dict:
         self.availability_calls.append(date)

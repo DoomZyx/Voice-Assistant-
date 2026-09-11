@@ -9,6 +9,17 @@ def _handler(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     if path == "/api/ping":
         return httpx.Response(200, json={"success": True, "message": "Backend actif"})
+    if path == "/api/voice/context/restaurant-42":
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "data": {
+                    "restaurantInfo": {"nom": "Restaurant Test"},
+                    "menu": {},
+                },
+            },
+        )
     if path == "/api/orders/ai/available-slots":
         return httpx.Response(200, json={"availableSlots": ["12:00", "12:30"], "message": "ok"})
     if path == "/api/reservations/ai/available-slots":
@@ -44,6 +55,12 @@ async def client(settings: Settings):
 async def test_ping(client: NodeApiClient):
     data = await client.ping()
     assert data["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_voice_context(client: NodeApiClient):
+    data = await client.get_voice_context("restaurant-42")
+    assert data["restaurantInfo"]["nom"] == "Restaurant Test"
 
 
 @pytest.mark.asyncio
