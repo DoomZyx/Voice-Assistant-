@@ -14,12 +14,17 @@ class ToolDispatcher:
     def __init__(self, node: NodeApiClient) -> None:
         self._node = node
 
-    async def dispatch(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def dispatch(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         logger.info("step=tool.start name=%s", name)
         if name == "check_availability":
-            result = await self._check_availability(arguments)
+            result = await self._check_availability(arguments, tenant_id)
         elif name == "create_appointment":
-            result = await self._create_appointment(arguments)
+            result = await self._create_appointment(arguments, tenant_id)
         else:
             result = {"success": False, "error": f"Fonction inconnue: {name}"}
         logger.info(
@@ -29,12 +34,16 @@ class ToolDispatcher:
         )
         return result
 
-    async def _check_availability(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def _check_availability(
+        self,
+        arguments: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         date = str(arguments.get("date") or "")
         if not date:
             return {"success": False, "error": "DATE_INVALIDE", "message": "Date manquante."}
         try:
-            return await self._node.check_availability(date)
+            return await self._node.check_availability(date, tenant_id=tenant_id)
         except NodeApiError as exc:
             return {
                 "success": False,
@@ -42,9 +51,13 @@ class ToolDispatcher:
                 "message": "Impossible de verifier les disponibilites.",
             }
 
-    async def _create_appointment(self, arguments: dict[str, Any]) -> dict[str, Any]:
+    async def _create_appointment(
+        self,
+        arguments: dict[str, Any],
+        tenant_id: str | None = None,
+    ) -> dict[str, Any]:
         try:
-            return await self._node.create_appointment(arguments)
+            return await self._node.create_appointment(arguments, tenant_id=tenant_id)
         except NodeApiError as exc:
             return map_create_error(exc)
 

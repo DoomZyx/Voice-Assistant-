@@ -9,6 +9,8 @@ import numpy as np
 _BIAS = 0x84
 _CLIP = 32635
 _MULAW_FRAME_BYTES_20MS_8K = 160
+MULAW_SILENCE_BYTE = 0xFF
+OUTBOUND_FRAME_SECONDS = 0.02
 
 _EXP_LUT = np.array(
     [0, 132, 396, 924, 1980, 4092, 8316, 16764],
@@ -55,4 +57,8 @@ def pcm16_to_mulaw_b64(pcm: np.ndarray) -> str:
 def split_mulaw_frames(mulaw: bytes, frame_bytes: int = _MULAW_FRAME_BYTES_20MS_8K) -> list[bytes]:
     if not mulaw:
         return []
-    return [mulaw[i : i + frame_bytes] for i in range(0, len(mulaw), frame_bytes)]
+    padded = mulaw
+    remainder = len(padded) % frame_bytes
+    if remainder:
+        padded = padded + bytes([MULAW_SILENCE_BYTE]) * (frame_bytes - remainder)
+    return [padded[i : i + frame_bytes] for i in range(0, len(padded), frame_bytes)]

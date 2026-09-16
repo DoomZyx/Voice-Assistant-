@@ -83,15 +83,34 @@ class FakeNode:
     def __init__(self) -> None:
         self.availability_calls: list[str] = []
         self.appointments: list[dict] = []
+        self.hangups: list[dict] = []
         self.voice_contexts: dict[str, dict] = {}
 
     async def get_voice_context(self, instance_id: str) -> dict:
         return self.voice_contexts.get(instance_id, {})
 
-    async def check_availability(self, date: str) -> dict:
+    async def check_availability(self, date: str, tenant_id: str | None = None) -> dict:
         self.availability_calls.append(date)
-        return {"success": True, "date": date, "slots": ["12:00"]}
+        return {
+            "success": True,
+            "date": date,
+            "closed": False,
+            "fenetres": [{"debut": "12:00", "fin": "12:00"}],
+        }
 
-    async def create_appointment(self, payload: dict) -> dict:
+    async def create_appointment(self, payload: dict, tenant_id: str | None = None) -> dict:
         self.appointments.append(payload)
-        return {"success": True, "appointment": {"_id": "1"}}
+        is_reservation = "reserv" in str(payload.get("type") or "").lower() or "réserv" in str(
+            payload.get("type") or ""
+        ).lower()
+        return {
+            "success": True,
+            "created": True,
+            "id": "resa1" if is_reservation else "ord1",
+            "type": "reservation" if is_reservation else "order",
+            "message": "ok",
+        }
+
+    async def report_call_ended(self, payload: dict, tenant_id: str | None = None) -> dict:
+        self.hangups.append({"payload": payload, "tenant_id": tenant_id})
+        return {"success": True, "persisted": False}

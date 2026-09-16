@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import uuid
 from typing import Any
 
@@ -13,6 +14,9 @@ from app.config import Settings
 from app.llm import LLMResult, ToolCall
 
 logger = logging.getLogger("mysmartfood-voice.llm")
+
+ALLOWED_TOOL_NAMES = {"create_appointment", "check_availability"}
+_HERMES_TOOL_CALL = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 
 
 class VLLMProvider:
@@ -64,9 +68,25 @@ class VLLMProvider:
             response.raise_for_status()
         data = response.json()
         message = (data.get("choices") or [{}])[0].get("message") or {}
+        usage = data.get("usage") or {}
+        input_tokens = int(usage.get("prompt_tokens") or 0)
+        output_tokens = int(usage.get("completion_tokens") or 0)
+        total_tokens = int(usage.get("total_tokens") or 0) or input_tokens + output_tokens
+        content = (message.get("content") or "").strip()
+        tool_calls = _parse_tool_calls(message.get("tool_calls") or [])
+        if not tool_calls:
+            hermes_calls, remainder = extract_hermes_tool_calls(content)
+            if hermes_calls:
+                tool_calls = hermes_calls
+                content = remainder
+                logger.info("step=llm.tool_calls source=hermes count=%s", len(tool_calls))
         return LLMResult(
-            content=(message.get("content") or "").strip(),
-            tool_calls=_parse_tool_calls(message.get("tool_calls") or []),
+            content=content,
+            tool_calls=tool_calls,
+            input_tokens=max(0, input_tokens),
+            output_tokens=max(0, output_tokens),
+            total_tokens=max(0, total_tokens),
+            model=str(data.get("model") or self._settings.vllm_model or ""),
         )
 
 
@@ -97,6 +117,36 @@ def build_llm(settings: Settings) -> VLLMProvider:
     raise ValueError(f"LLM_PROVIDER inconnu: {settings.llm_provider}")
 
 
+def extract_hermes_tool_calls(content: str) -> tuple[list[ToolCall], str]:
+    """Recupere les tool_calls Hermes si vLLM les a laisses dans le texte."""
+    if not content:
+        return [], content
+    calls: list[ToolCall] = []
+    for match in _HERMES_TOOL_CALL.finditer(content):
+        parsed = _parse_json_object(match.group(1))
+        if not parsed:
+            continue
+        name = str(parsed.get("name") or "")
+        if name not in ALLOWED_TOOL_NAMES:
+            continue
+        arguments = parsed.get("arguments") or {}
+        if isinstance(arguments, str):
+            arguments = _parse_json_object(arguments) or {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        calls.append(ToolCall(id=str(uuid.uuid4()), name=name, arguments=arguments))
+    remainder = _HERMES_TOOL_CALL.sub("", content).strip() if calls else content
+    return calls, remainder
+
+
+def _parse_json_object(raw: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _parse_tool_calls(raw: list[Any]) -> list[ToolCall]:
     calls: list[ToolCall] = []
     for item in raw:
@@ -113,11 +163,14 @@ def _parse_tool_calls(raw: list[Any]) -> list[ToolCall]:
             parsed = arguments
         else:
             parsed = {}
+        name = str(fn.get("name") or "")
+        if name not in ALLOWED_TOOL_NAMES:
+            continue
         calls.append(
             ToolCall(
                 id=str(item.get("id") or uuid.uuid4()),
-                name=str(fn.get("name") or ""),
-                arguments=parsed,
+                name=name,
+                arguments=parsed if isinstance(parsed, dict) else {},
             )
         )
     return calls

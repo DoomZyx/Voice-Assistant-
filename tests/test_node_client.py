@@ -21,19 +21,29 @@ def _handler(request: httpx.Request) -> httpx.Response:
             },
         )
     if path == "/api/orders/ai/available-slots":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
         return httpx.Response(200, json={"availableSlots": ["12:00", "12:30"], "message": "ok"})
     if path == "/api/reservations/ai/available-slots":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
         return httpx.Response(200, json={"remainingCoversMidi": 8, "remainingCoversSoir": 12})
     if path == "/api/reservations/ai/create":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
         return httpx.Response(
             201,
             json={"success": True, "data": {"_id": "resa1", "nom": "Axel"}, "message": "Réservation créée"},
         )
     if path == "/api/orders/ai/create":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
         return httpx.Response(
             201,
             json={"success": True, "data": {"_id": "ord1"}, "message": "Commande créée"},
         )
+    if path == "/api/voice/usage":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
+        return httpx.Response(204)
+    if path == "/api/voice/call-ended":
+        assert request.headers.get("x-tenant-id") == "ff3e05bf-2da5-465c-a7a2-f635021f49a9"
+        return httpx.Response(200, json={"success": True, "persisted": False, "notified": True})
     return httpx.Response(404, json={"error": "not found"})
 
 
@@ -65,9 +75,10 @@ async def test_get_voice_context(client: NodeApiClient):
 
 @pytest.mark.asyncio
 async def test_check_availability(client: NodeApiClient):
-    data = await client.check_availability("2026-09-09")
+    data = await client.check_availability("2026-09-09", tenant_id="ff3e05bf-2da5-465c-a7a2-f635021f49a9")
     assert data["success"] is True
-    assert data["slots"] == ["12:00", "12:30"]
+    assert data["fenetres"] == [{"debut": "12:00", "fin": "12:30"}]
+    assert "slots" not in data
     assert data["remainingCoversMidi"] == 8
     assert data["remainingCoversSoir"] == 12
 
@@ -82,10 +93,14 @@ async def test_create_reservation(client: NodeApiClient):
             "date": "2026-09-09",
             "time": "12:20",
             "nombrePersonnes": 6,
-        }
+        },
+        tenant_id="ff3e05bf-2da5-465c-a7a2-f635021f49a9",
     )
     assert data["success"] is True
-    assert data["appointment"]["_id"] == "resa1"
+    assert data["created"] is True
+    assert data["id"] == "resa1"
+    assert data["type"] == "reservation"
+    assert "appointment" not in data
 
 
 @pytest.mark.asyncio
@@ -98,10 +113,14 @@ async def test_create_order(client: NodeApiClient):
             "date": "2026-09-09",
             "time": "19:00",
             "commandes": [{"nom": "Burger", "quantite": 1}],
-        }
+        },
+        tenant_id="ff3e05bf-2da5-465c-a7a2-f635021f49a9",
     )
     assert data["success"] is True
-    assert data["appointment"]["_id"] == "ord1"
+    assert data["created"] is True
+    assert data["id"] == "ord1"
+    assert data["type"] == "order"
+    assert "appointment" not in data
 
 
 @pytest.mark.asyncio
@@ -117,3 +136,19 @@ async def test_create_reservation_http_error(settings: Settings):
         )
     assert exc.value.status_code == 400
     await node.aclose()
+
+
+@pytest.mark.asyncio
+async def test_report_call_ended(client: NodeApiClient):
+    data = await client.report_call_ended(
+        {
+            "instanceId": "ff3e05bf-2da5-465c-a7a2-f635021f49a9",
+            "streamSid": "MZ1",
+            "callSid": "CA1",
+            "turns": [{"role": "user", "content": "oui"}],
+            "liveCreate": {"type": "reservation", "id": "resa1"},
+        },
+        tenant_id="ff3e05bf-2da5-465c-a7a2-f635021f49a9",
+    )
+    assert data["success"] is True
+    assert data["persisted"] is False

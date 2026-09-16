@@ -1,0 +1,11 @@
+.venv
+.env
+.git
+.pytest_cache
+__pycache__
+*.pyc
+.cache
+tests
+infrastructure
+mysmartfood_voice.egg-info
+ARCHITECTURE.md

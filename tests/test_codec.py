@@ -1,6 +1,6 @@
 import numpy as np
 
-from app.audio.codec import mulaw_to_pcm16, pcm16_to_mulaw
+from app.audio.codec import mulaw_to_pcm16, pcm16_to_mulaw, split_mulaw_frames
 from app.audio.resample import resample_pcm16
 
 
@@ -17,6 +17,14 @@ def test_mulaw_non_zero_survives():
     assert out[0] == 0
     assert np.sign(out[1]) == 1
     assert np.sign(out[2]) == -1
+
+
+def test_split_mulaw_pads_last_frame():
+    frames = split_mulaw_frames(b"\x00" * 200)
+    assert len(frames) == 2
+    assert len(frames[0]) == 160
+    assert len(frames[1]) == 160
+    assert frames[1][40:] == b"\xff" * 120
 
 
 def test_resample_length():

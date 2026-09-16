@@ -37,6 +37,8 @@ async def test_dispatch_create():
     )
     assert result["success"] is True
     assert len(node.appointments) == 1
+    assert result["id"] == "ord1"
+    assert result["type"] == "order"
 
 
 def test_map_phone_error():

@@ -5,9 +5,11 @@ CHECK_AVAILABILITY = {
     "function": {
         "name": "check_availability",
         "description": (
-            "Verifier les creneaux et places restantes pour une date YYYY-MM-DD. "
-            "La reponse peut contenir remainingCoversMidi et remainingCoversSoir. "
-            "Deux services : MIDI 11h-15h, SOIR 18h-00h."
+            "Verifier si une date est ouverte. La reponse contient des fenetres debut/fin, "
+            "pas une liste a lire, plus remainingCoversMidi et remainingCoversSoir. "
+            "Ne recites jamais tous les creneaux. Deux services : MIDI 11h-15h, SOIR 18h-00h. "
+            "A n'utiliser que si l'heure manque, est hors horaires, ou si create_appointment "
+            "renvoie COUVERTS_INSUFFISANTS."
         ),
         "parameters": {
             "type": "object",
@@ -28,8 +30,9 @@ CREATE_APPOINTMENT = {
         "name": "create_appointment",
         "description": (
             "Creer une reservation de table ou une commande a emporter apres confirmation client. "
-            "Reservation : nombrePersonnes obligatoire, commandes []. "
-            "Commande a emporter : commandes = liste de plats (nom + quantite)."
+            "Ne pas inventer de plat. Reservation : nombrePersonnes obligatoire, commandes []. "
+            "Commande a emporter : commandes = liste de plats (nom + quantite). "
+            "Apres succes, confirme en une phrase courte sans lire d'identifiant."
         ),
         "parameters": {
             "type": "object",

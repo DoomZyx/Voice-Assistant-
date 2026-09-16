@@ -97,6 +97,7 @@ async def test_twilio_context_forces_caller_number_in_create_appointment():
                 "produits": [{"nom": "Burger Test", "prix": 12}],
             }
         },
+        "amenities": [{"slug": "pmr", "label": "Acces PMR", "status": "available"}],
     }
     session = CallSession(FakeWebSocket(), runtime)
     start = {
@@ -122,7 +123,12 @@ async def test_twilio_context_forces_caller_number_in_create_appointment():
     snapshot = session.sanitized_snapshot()
     assert snapshot["instanceId"] == "restaurant-42"
     assert "0612345678" not in json.dumps(snapshot)
+    assert "pmr" in session._history[0]["content"]
     await session.close()
+    hangup = runtime.node.hangups[0]["payload"]
+    assert hangup["liveCreate"] == {"type": "reservation", "id": "resa1"}
+    assert hangup["turns"]
+    assert all(turn["role"] in {"user", "assistant"} for turn in hangup["turns"])
 
 
 @pytest.mark.asyncio
@@ -177,3 +183,27 @@ async def test_tool_round():
     assert runtime.node.availability_calls == ["2026-09-09"]
     assert "Il reste des places a midi." in tts.texts
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_hangup_without_create_reports_no_live_create():
+    runtime = _runtime()
+    session = CallSession(FakeWebSocket(), runtime)
+    await session.handle_raw(
+        json.dumps(
+            {
+                "event": "start",
+                "start": {
+                    "streamSid": "MZ1",
+                    "callSid": "CA1",
+                    "customParameters": {"instanceId": "restaurant-42"},
+                },
+            }
+        )
+    )
+    await session._turn_task
+    await session.close()
+    hangup = runtime.node.hangups[0]["payload"]
+    assert hangup["liveCreate"] is None
+    assert hangup["instanceId"] == "restaurant-42"
+    assert hangup["turns"]

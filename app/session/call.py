@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from app.audio.buffer import AudioBuffer
-from app.audio.codec import mulaw_b64_to_pcm16, pcm16_to_mulaw, split_mulaw_frames
+from app.audio.codec import (
+    OUTBOUND_FRAME_SECONDS,
+    mulaw_b64_to_pcm16,
+    pcm16_to_mulaw,
+    split_mulaw_frames,
+)
 from app.audio.resample import resample_pcm16
 from app.llm import LLMResult
 from app.llm.tools import LLM_TOOLS
@@ -29,6 +34,8 @@ FALLBACK_REPLY = "Je n'ai pas compris. Pouvez-vous repeter ?"
 MIN_UTTERANCE_SAMPLES_8K = 1600  # 200 ms
 MEDIA_LOG_EVERY = 50
 VOICE_CONTEXT_TIMEOUT_SECONDS = 2.0
+HANGUP_MAX_TURNS = 40
+HANGUP_MAX_TURN_CHARS = 2000
 MASKED_CALLER_VALUES = {"anonymous", "blocked", "private", "restricted", "unknown", "withheld"}
 
 
@@ -54,6 +61,7 @@ class CallSession:
         self._turn_task: asyncio.Task | None = None
         self._assistant_speaking = False
         self._closed = False
+        self._live_create: dict[str, Any] | None = None
         self._media_in = 0
         self._media_out = 0
         self._vad = runtime.vad_model.new_session(runtime.settings) if runtime.vad_model else None
@@ -131,6 +139,7 @@ class CallSession:
                 pass
             except Exception:
                 logger.error("step=session.task_error stream=%s", self.stream_sid)
+        hangup_payload = self._build_hangup_payload()
         buffered = len(self._utterance) + len(self._pre_roll)
         self._utterance.clear()
         self._pre_roll.clear()
@@ -142,6 +151,7 @@ class CallSession:
                 reset()
         self._assistant_speaking = False
         self._ws = None
+        await self._report_hangup(hangup_payload)
         self._log(
             "session.close",
             reason=reason,
@@ -150,6 +160,7 @@ class CallSession:
             history=history_len,
             media_in=self._media_in,
             media_out=self._media_out,
+            live_create=bool(self._live_create),
         )
 
     async def _on_start(self, data: dict[str, Any]) -> None:
@@ -210,6 +221,8 @@ class CallSession:
         self._media_in += 1
         if self._media_in == 1 or self._media_in % MEDIA_LOG_EVERY == 0:
             self._log("twilio.media.in", chunks=self._media_in, samples=pcm.size)
+        if self._assistant_speaking:
+            return
         if self._vad is None:
             self._utterance.append(pcm)
             return
@@ -332,7 +345,9 @@ class CallSession:
             while rounds < self._runtime.settings.llm_max_tool_rounds:
                 if self._cancel.is_set():
                     return ""
+                round_started = time.perf_counter()
                 result: LLMResult = await llm.complete(self._history, LLM_TOOLS)
+                await self._report_usage(result, _ms(round_started))
                 _force_caller_number(result, self._caller_number)
                 if result.tool_calls:
                     self._history.append(_assistant_tool_message(result))
@@ -340,7 +355,12 @@ class CallSession:
                         self.stage = f"tool:{call.name}"
                         self._log("llm.tool", name=call.name, call_id=call.id)
                         tool_started = time.perf_counter()
-                        tool_result = await self._runtime.dispatcher.dispatch(call.name, call.arguments)
+                        tool_result = await self._runtime.dispatcher.dispatch(
+                            call.name,
+                            call.arguments,
+                            self.instance_id,
+                        )
+                        self._remember_live_create(call.name, tool_result)
                         self._log(
                             "tool.done",
                             name=call.name,
@@ -392,13 +412,20 @@ class CallSession:
             if not self.stream_sid or self._ws is None:
                 self._log("tts.no_stream")
                 return
-            for frame in split_mulaw_frames(mulaw):
+            frames = split_mulaw_frames(mulaw)
+            next_frame_at = time.monotonic()
+            for index, frame in enumerate(frames):
                 if self._cancel.is_set() or self._closed:
                     self._log("tts.interrupted", frames=frames_sent)
                     break
+                if index > 0:
+                    delay = next_frame_at - time.monotonic()
+                    if delay > 0:
+                        await asyncio.sleep(delay)
                 await self._send_text(media_out(self.stream_sid, _b64(frame)))
                 frames_sent += 1
                 self._media_out += 1
+                next_frame_at += OUTBOUND_FRAME_SECONDS
             self._log("tts.done", ms=_ms(started), samples=pcm8k.size, frames=frames_sent)
         except Exception:
             self.last_error = "tts_failed"
@@ -412,6 +439,75 @@ class CallSession:
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_latency("tts", _ms(started))
 
+    async def _report_usage(self, result: LLMResult, latency_ms: int) -> None:
+        if not self.instance_id:
+            return
+        if (result.input_tokens or 0) + (result.output_tokens or 0) <= 0:
+            return
+        provider = str(getattr(self._runtime.llm, "active_provider", None) or "vllm")
+        if provider not in {"vllm", "openai"}:
+            provider = "vllm"
+        try:
+            await self._runtime.node.report_usage(
+                {
+                    "instanceId": self.instance_id,
+                    "source": "voice",
+                    "provider": provider,
+                    "model": result.model or "",
+                    "inputTokens": int(result.input_tokens or 0),
+                    "outputTokens": int(result.output_tokens or 0),
+                    "totalTokens": int(result.total_tokens or 0),
+                    "latencyMs": int(latency_ms or 0),
+                }
+            )
+        except Exception as exc:
+            logger.warning("step=llm.usage_report_failed error=%s", str(exc)[:200])
+
+    def _remember_live_create(self, name: str, tool_result: dict[str, Any]) -> None:
+        if name != "create_appointment":
+            return
+        if not tool_result.get("success"):
+            return
+        created_type = tool_result.get("type")
+        created_id = tool_result.get("id")
+        live: dict[str, Any] = {}
+        if created_type in {"reservation", "order"}:
+            live["type"] = created_type
+        if created_id is not None:
+            text_id = str(created_id).strip()
+            if text_id:
+                live["id"] = text_id
+        self._live_create = live or None
+
+    def _build_hangup_payload(self) -> dict[str, Any] | None:
+        if not self.instance_id:
+            return None
+        payload: dict[str, Any] = {
+            "instanceId": self.instance_id,
+            "streamSid": self.stream_sid,
+            "callSid": self.call_sid,
+            "turns": _stt_turns(self._history),
+            "liveCreate": self._live_create,
+        }
+        return payload
+
+    async def _report_hangup(self, payload: dict[str, Any] | None) -> None:
+        if not payload:
+            return
+        report = getattr(self._runtime.node, "report_call_ended", None)
+        if not callable(report):
+            return
+        try:
+            await report(payload, tenant_id=self.instance_id)
+            self._log(
+                "hangup.reported",
+                turns=len(payload.get("turns") or []),
+                live_create=bool(payload.get("liveCreate")),
+                created_type=(payload.get("liveCreate") or {}).get("type"),
+            )
+        except Exception as exc:
+            logger.warning("step=hangup.failed error=%s", str(exc)[:200])
+
     async def _send_text(self, message: str) -> None:
         websocket = self._ws
         if websocket is None:
@@ -423,6 +519,28 @@ class CallSession:
                 await websocket.send_text(message)
             except Exception as exc:
                 self._log("twilio.send_error", error=str(exc)[:200])
+
+
+def _stt_turns(history: list[dict[str, Any]]) -> list[dict[str, str]]:
+    turns: list[dict[str, str]] = []
+    for message in history:
+        role = message.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        if message.get("tool_calls"):
+            continue
+        content = message.get("content")
+        if not isinstance(content, str) or not content.strip():
+            continue
+        turns.append(
+            {
+                "role": role,
+                "content": content.strip()[:HANGUP_MAX_TURN_CHARS],
+            }
+        )
+        if len(turns) >= HANGUP_MAX_TURNS:
+            break
+    return turns
 
 
 def _b64(frame: bytes) -> str:

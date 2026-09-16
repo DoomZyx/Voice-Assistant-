@@ -92,7 +92,7 @@ def test_twilio_call_e2e_stop_cleans_session(caplog):
         assert client.get("/health").json()["sessions_active"] == 0
         with client.websocket_connect("/media-stream") as ws:
             ws.send_text(json.dumps({"event": "connected", "protocol": "Call", "version": "1.0.0"}))
-            ws.send_text(_start_msg())
+            ws.send_bytes(_start_msg().encode("utf-8"))
             greeting = _receive_media(ws, GREETING_FRAMES)
             assert greeting
             ws.send_text(_media_msg())
@@ -179,3 +179,6 @@ def test_twilio_e2e_tool_round_uses_fastify_dispatcher():
         assert runtime.node.availability_calls == ["2026-09-09"]
         assert app.state.sessions.active_count == 0
         assert "Il reste des places a midi." in runtime.tts.texts
+        hangup = runtime.node.hangups[0]["payload"]
+        assert hangup["liveCreate"] is None
+        assert hangup["instanceId"] == "restaurant-e2e"

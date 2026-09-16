@@ -193,7 +193,7 @@ def create_app(
         close_reason = "disconnect"
         try:
             while True:
-                message = await websocket.receive_text()
+                message = await _receive_twilio_message(websocket)
                 ended = await session.handle_raw(message)
                 if ended:
                     close_reason = "twilio.stop"
@@ -203,7 +203,11 @@ def create_app(
             logger.info("step=twilio.ws.disconnect stream=%s call=%s", session.stream_sid, session.call_sid)
         except Exception:
             close_reason = "error"
-            logger.error("step=twilio.ws.error stream=%s call=%s", session.stream_sid, session.call_sid)
+            logger.exception(
+                "step=twilio.ws.error stream=%s call=%s",
+                session.stream_sid,
+                session.call_sid,
+            )
         finally:
             await manager.close(websocket, reason=close_reason)
             logger.info(
@@ -215,6 +219,20 @@ def create_app(
             )
 
     return app
+
+
+async def _receive_twilio_message(websocket: WebSocket) -> str | bytes:
+    """Fastify proxifie souvent les messages Twilio en frames binaires UTF-8."""
+    message = await websocket.receive()
+    if message.get("type") == "websocket.disconnect":
+        raise WebSocketDisconnect(message.get("code") or 1000)
+    text = message.get("text")
+    if text is not None:
+        return text
+    payload = message.get("bytes")
+    if payload is not None:
+        return payload
+    raise WebSocketDisconnect(1000)
 
 
 async def _log_vllm_model(voice: VoiceRuntime, settings: Settings) -> None:

@@ -15,6 +15,10 @@ class ToolCall:
 class LLMResult:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    model: str = ""
 
 
 class LLMProvider(Protocol):
