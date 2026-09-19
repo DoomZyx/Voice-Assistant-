@@ -1,7 +1,11 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from app.prompts import (
     MAX_RESTAURANT_CONTEXT_CHARS,
     build_agent_instructions,
     build_restaurant_context,
+    format_clock_policy,
     format_services_policy,
     has_usable_restaurant_context,
     pack_menu_for_prompt,
@@ -106,3 +110,29 @@ def test_has_usable_restaurant_context():
     )
     assert not has_usable_restaurant_context({})
     assert not has_usable_restaurant_context(None)
+
+
+def test_clock_policy_uses_restaurant_timezone():
+    now = datetime(2026, 9, 19, 8, 50, tzinfo=ZoneInfo("UTC"))
+    text = format_clock_policy({"timezone": "Europe/Paris"}, now=now)
+    assert "Europe/Paris" in text
+    assert "Samedi" in text
+    assert "19/09/2026" in text
+    assert "10:50" in text
+    assert "demain" in text
+    assert "ce soir" in text
+
+
+def test_restaurant_context_includes_clock():
+    now = datetime(2026, 9, 20, 21, 0, tzinfo=ZoneInfo("Europe/Paris"))
+    text = build_restaurant_context(
+        {
+            "restaurantInfo": {"nom": "Chez Test"},
+            "menu": {"c": {"nom": "C", "produits": [{"nom": "Burger"}]}},
+        },
+        now=now,
+    )
+    assert "Dimanche" in text
+    assert "20/09/2026" in text
+    assert "21:00" in text
+    assert "Europe/Paris" in text
