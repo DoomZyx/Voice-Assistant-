@@ -60,18 +60,35 @@ def test_pack_menu_drops_options_and_truncates_description():
     assert len(packed["burgers"]["produits"][0]["description"]) <= 80
 
 
-def test_format_services_policy_uses_hours():
+def test_format_services_policy_lists_hours_per_day():
     text = format_services_policy(
         {
             "lundi": {
                 "ouvert": True,
                 "midi": {"ouverture": "11:30", "fermeture": "14:30"},
                 "soir": {"ouverture": "19:00", "fermeture": "22:30"},
-            }
+            },
+            "mardi": {"ouvert": False},
+            "samedi": {
+                "ouvert": True,
+                "midi": {"ouverture": "12:00", "fermeture": "15:00"},
+                "soir": {"ouverture": "18:00", "fermeture": "00:00"},
+            },
+            "dimanche": {"ouvert": False},
         }
     )
-    assert "11:30-14:30" in text
-    assert "19:00-22:30" in text
+    assert "Lundi: 11:30-14:30 et 19:00-22:30" in text
+    assert "Mardi: ferme" in text
+    assert "Samedi: 12:00-15:00 et 18:00-00:00" in text
+    assert "Dimanche: ferme" in text
+    assert "Mercredi: ferme" in text
+    assert "11h-15h" not in text
+    assert "Service MIDI observe" not in text
+
+
+def test_format_services_policy_without_hours():
+    text = format_services_policy(None)
+    assert "horaires du restaurant" in text
     assert "11h-15h" not in text
 
 

@@ -131,36 +131,59 @@ def _fit_context_json(safe_context: dict[str, Any], max_chars: int) -> str:
     return serialized
 
 
-def format_services_policy(horaires: Any) -> str:
-    """Derive MIDI/SOIR depuis horairesOuverture au lieu de plages hardcodees."""
-    midi: set[str] = set()
-    soir: set[str] = set()
-    if isinstance(horaires, dict):
-        for block in horaires.values():
-            if not isinstance(block, dict) or block.get("ouvert") is False:
-                continue
-            for kind, bucket in (("midi", midi), ("soir", soir)):
-                slot = block.get(kind)
-                if not isinstance(slot, dict):
-                    continue
-                opens = str(slot.get("ouverture") or "").strip()
-                closes = str(slot.get("fermeture") or "").strip()
-                if opens and closes:
-                    bucket.add(f"{opens}-{closes}")
+DAY_ORDER = (
+    "lundi",
+    "mardi",
+    "mercredi",
+    "jeudi",
+    "vendredi",
+    "samedi",
+    "dimanche",
+)
 
-    lines = [
-        "Les services et plages horaires viennent exclusivement de horairesOuverture.",
-        "N'invente jamais de plage hors de ces donnees.",
-    ]
-    if midi:
-        lines.append(f"Service MIDI observe : {', '.join(sorted(midi))}.")
-    if soir:
-        lines.append(f"Service SOIR observe : {', '.join(sorted(soir))}.")
-    if not midi and not soir:
-        lines.append(
-            "Aucune plage explicite : demande l'heure puis verifie avec check_availability."
-        )
-    return "\n".join(lines)
+
+def _capitalize_day(day: str) -> str:
+    return f"{day[0].upper()}{day[1:]}" if day else ""
+
+
+def _day_has_slot(block: Any) -> bool:
+    if not isinstance(block, dict) or block.get("ouvert") is False:
+        return False
+    return any(
+        isinstance(block.get(kind), dict)
+        and str(block[kind].get("ouverture") or "").strip()
+        and str(block[kind].get("fermeture") or "").strip()
+        for kind in ("midi", "soir")
+    )
+
+
+def format_services_policy(horaires: Any) -> str:
+    """Liste les plages jour par jour depuis horairesOuverture."""
+    header = (
+        "Les plages viennent exclusivement des horaires du restaurant. "
+        "N'invente jamais de plage hors de ces donnees."
+    )
+    if not isinstance(horaires, dict):
+        return header
+
+    lines: list[str] = []
+    for day in DAY_ORDER:
+        block = horaires.get(day)
+        if not _day_has_slot(block):
+            lines.append(f"{_capitalize_day(day)}: ferme")
+            continue
+        parts: list[str] = []
+        for kind in ("midi", "soir"):
+            slot = block.get(kind)
+            if not isinstance(slot, dict):
+                continue
+            opens = str(slot.get("ouverture") or "").strip()
+            closes = str(slot.get("fermeture") or "").strip()
+            if opens and closes:
+                parts.append(f"{opens}-{closes}")
+        lines.append(f"{_capitalize_day(day)}: {' et '.join(parts)}")
+
+    return f"{header} {' '.join(lines)}"
 
 
 def build_restaurant_context(restaurant_context: dict[str, Any] | None) -> str:
