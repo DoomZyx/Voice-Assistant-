@@ -1,5 +1,11 @@
 # Architecture et maintenance — fonctionnalité vocale realtime
 
+> Mise a jour 2026-09-19 : le runtime native streame LLM/TTS, gere le barge-in,
+> separe VAD et fin de tour, et expose des percentiles p50/p95.
+> L'audit mesure, la carte KEEP/REPLACE et la procedure Twilio sont dans
+> `voice-server/docs/VOICE_AUDIT.md`. Les sections 5.5, 9, 18 et 19 ci-dessous
+> decrivent encore partiellement l'etat avant ce refresh.
+
 ## 1. Objet et statut du document
 
 Ce document est la référence technique du parcours téléphonique realtime de

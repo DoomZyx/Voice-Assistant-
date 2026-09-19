@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from app.audio.preprocess import peak_normalize_pcm16
 from app.audio.resample import float32_to_pcm16, resample_pcm16
 from app.config import Settings
 
@@ -51,10 +52,16 @@ class KokoroTTS:
                 lang=self._settings.kokoro_lang,
             )
             pcm = float32_to_pcm16(np.asarray(samples, dtype=np.float32))
-            return resample_pcm16(pcm, int(sample_rate), self._settings.twilio_sample_rate)
+            pcm8k = resample_pcm16(pcm, int(sample_rate), self._settings.twilio_sample_rate)
+            return peak_normalize_pcm16(pcm8k)
 
         async with self._lock:
             return await asyncio.to_thread(_run)
+
+    async def synthesize_stream(self, text: str):
+        pcm = await self.synthesize(text)
+        if pcm.size:
+            yield pcm
 
 
 def _download(url: str, dest: Path) -> None:

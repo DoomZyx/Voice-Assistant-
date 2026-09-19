@@ -9,6 +9,7 @@ from app.node_client import NodeApiClient
 from app.stt import STTEngine
 from app.telemetry import VoiceTelemetry
 from app.tools.dispatcher import ToolDispatcher
+from app.turn.detector import HeuristicTurnDetector, TurnDetector
 from app.tts import TTSEngine
 from app.vad.silero import SileroModel
 
@@ -26,12 +27,24 @@ class VoiceRuntime:
     engine_error: str | None = None
     telemetry: VoiceTelemetry | None = None
     component_errors: dict[str, str] | None = None
+    turn: TurnDetector | None = None
+    stt_provider: str = ""
+    tts_provider: str = ""
+    llm_provider_name: str = ""
 
     def __post_init__(self) -> None:
         if self.telemetry is None:
             self.telemetry = VoiceTelemetry()
         if self.component_errors is None:
             self.component_errors = {}
+        if self.turn is None:
+            self.turn = HeuristicTurnDetector()
+        if not self.stt_provider:
+            self.stt_provider = self.settings.stt_provider
+        if not self.tts_provider:
+            self.tts_provider = self.settings.tts_provider
+        if not self.llm_provider_name:
+            self.llm_provider_name = self.settings.llm_provider
 
     @property
     def active_llm_provider(self) -> str:

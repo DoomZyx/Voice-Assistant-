@@ -8,10 +8,15 @@ def resample_pcm16(pcm: np.ndarray, src_rate: int, dst_rate: int) -> np.ndarray:
         return pcm.astype(np.int16, copy=False)
     if pcm.size == 0:
         return np.zeros(0, dtype=np.int16)
+    source = pcm.astype(np.float32)
+    if dst_rate < src_rate:
+        window = max(2, int(round(src_rate / dst_rate)))
+        kernel = np.ones(window, dtype=np.float32) / window
+        source = np.convolve(source, kernel, mode="same")
     n = max(1, int(round(pcm.size * dst_rate / src_rate)))
-    x_old = np.linspace(0.0, 1.0, num=pcm.size, endpoint=False)
+    x_old = np.linspace(0.0, 1.0, num=source.size, endpoint=False)
     x_new = np.linspace(0.0, 1.0, num=n, endpoint=False)
-    y = np.interp(x_new, x_old, pcm.astype(np.float32))
+    y = np.interp(x_new, x_old, source)
     return np.clip(np.rint(y), -32768, 32767).astype(np.int16)
 
 

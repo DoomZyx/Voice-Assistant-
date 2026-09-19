@@ -6,28 +6,37 @@ import asyncio
 import base64
 import json
 import logging
-import re
 import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from app.audio.buffer import AudioBuffer
+from app.audio.chunking import flush_speech_chunks
 from app.audio.codec import (
     OUTBOUND_FRAME_SECONDS,
     mulaw_b64_to_pcm16,
     pcm16_to_mulaw,
     split_mulaw_frames,
 )
+from app.audio.preprocess import apply_preprocess
 from app.audio.resample import resample_pcm16
 from app.llm import LLMResult
 from app.llm.tools import LLM_TOOLS
-from app.prompts import (
-    CONTEXT_UNAVAILABLE_GREETING,
-    build_agent_instructions,
-    has_usable_restaurant_context,
+from app.observability import emit_event
+from app.prompts import build_agent_instructions
+from app.session.bootstrap import (
+    apply_forced_caller_number,
+    build_call_plan,
+    normalize_french_caller_number,
+    sanitize_identifier,
 )
-from app.stream_token import stream_token_failure_reason
+from app.session.interrupt import BargeInConfirmer, PlaybackEpoch
+from app.session.messages import (
+    apply_forced_caller_to_result,
+    assistant_tool_message,
+    stt_turns,
+)
 from app.twilio.protocol import clear_stream, media_out, parse_event
 
 if TYPE_CHECKING:
@@ -38,10 +47,6 @@ logger = logging.getLogger("mysmartfood-voice.session")
 FALLBACK_REPLY = "Je n'ai pas compris. Pouvez-vous repeter ?"
 MIN_UTTERANCE_SAMPLES_8K = 1600  # 200 ms
 MEDIA_LOG_EVERY = 50
-VOICE_CONTEXT_TIMEOUT_SECONDS = 3.0
-HANGUP_MAX_TURNS = 40
-HANGUP_MAX_TURN_CHARS = 2000
-MASKED_CALLER_VALUES = {"anonymous", "blocked", "private", "restricted", "unknown", "withheld"}
 
 
 class CallSession:
@@ -71,6 +76,10 @@ class CallSession:
         self._media_out = 0
         self._vad = runtime.vad_model.new_session(runtime.settings) if runtime.vad_model else None
         self._context_ready = False
+        self._pending_user = ""
+        self._incomplete_task: asyncio.Task | None = None
+        self._barge_gate = BargeInConfirmer()
+        self._epoch = PlaybackEpoch()
 
     @property
     def closed(self) -> bool:
@@ -78,8 +87,8 @@ class CallSession:
 
     def sanitized_snapshot(self) -> dict[str, Any]:
         return {
-            "streamSid": _sanitize_identifier(self.stream_sid),
-            "callSid": _sanitize_identifier(self.call_sid),
+            "streamSid": sanitize_identifier(self.stream_sid),
+            "callSid": sanitize_identifier(self.call_sid),
             "instanceId": self.instance_id,
             "stage": self.stage,
             "duration_seconds": round(max(0.0, time.monotonic() - self._started_at), 1),
@@ -132,6 +141,10 @@ class CallSession:
         self._closed = True
         self.stage = "closed"
         self._cancel.set()
+        self._epoch.bump()
+        self._barge_gate.reset()
+        if self._incomplete_task and not self._incomplete_task.done():
+            self._incomplete_task.cancel()
         task = self._turn_task
         self._turn_task = None
         task_cancelled = False
@@ -169,68 +182,29 @@ class CallSession:
         )
 
     async def _on_start(self, data: dict[str, Any]) -> bool:
+        plan = await build_call_plan(
+            data,
+            self._runtime.settings,
+            self._runtime.node,
+            self._runtime.telemetry,
+        )
         start = data.get("start") or {}
-        self.stream_sid = start.get("streamSid")
-        self.call_sid = start.get("callSid")
-        custom_parameters = start.get("customParameters") or {}
-        if not isinstance(custom_parameters, dict):
-            custom_parameters = {}
-        self._caller_number = normalize_french_caller_number(custom_parameters.get("callerNumber"))
-        requested_id = _sanitize_identifier(custom_parameters.get("instanceId"))
-        if requested_id:
-            token = (
-                custom_parameters.get("streamToken")
-                or custom_parameters.get("token")
-                or custom_parameters.get("StreamToken")
-                or ""
-            )
-            secret = str(self._runtime.settings.twilio_auth_token or "").strip()
-            reason = stream_token_failure_reason(requested_id, token, secret)
-            if reason:
-                self.last_error = "stream_token_rejected"
-                self.instance_id = None
-                self.stage = "rejected"
-                self._log("twilio.start.rejected", reason=reason)
-                return True
-        self.instance_id = requested_id
-        restaurant_context = None
-        context_unavailable = False
-        if self.instance_id:
-            context_started = time.perf_counter()
-            try:
-                restaurant_context = await asyncio.wait_for(
-                    self._runtime.node.get_voice_context(self.instance_id),
-                    timeout=VOICE_CONTEXT_TIMEOUT_SECONDS,
-                )
-            except Exception:
-                context_unavailable = True
-                self.last_error = "voice_context_unavailable"
-                if self._runtime.telemetry:
-                    self._runtime.telemetry.record_error("voice_context")
+        self.stream_sid = plan.stream_sid or None
+        self.call_sid = plan.call_sid or None
+        self._caller_number = plan.caller_number
+        if plan.rejected:
+            self.last_error = plan.last_error
+            self.instance_id = None
+            self.stage = "rejected"
+            self._log("twilio.start.rejected", reason=plan.reject_reason)
+            return True
+        self.instance_id = plan.instance_id
+        self._context_ready = plan.context_ready
+        if plan.last_error:
+            self.last_error = plan.last_error
+            if plan.context_unavailable:
                 self._log("voice.context.unavailable")
-            finally:
-                if self._runtime.telemetry:
-                    self._runtime.telemetry.record_latency(
-                        "voice_context",
-                        _ms(context_started),
-                    )
-        if context_unavailable or (
-            self.instance_id and not has_usable_restaurant_context(restaurant_context)
-        ):
-            context_unavailable = True
-            self._context_ready = False
-            if self.last_error is None:
-                self.last_error = "voice_context_unavailable"
-        else:
-            self._context_ready = True
-        self._history[0] = {
-            "role": "system",
-            "content": build_agent_instructions(
-                self._caller_number,
-                restaurant_context,
-                context_unavailable=context_unavailable and bool(self.instance_id),
-            ),
-        }
+        self._history[0] = plan.seed_messages[0]
         self.stage = "greeting"
         media_format = start.get("mediaFormat") or {}
         self._log(
@@ -242,14 +216,13 @@ class CallSession:
         )
         if not self._runtime.engines_ready:
             self._log("engines.not_ready")
-        greeting = (
-            CONTEXT_UNAVAILABLE_GREETING
-            if (context_unavailable and bool(self.instance_id))
-            else self._runtime.settings.greeting_text
+        self._history.append({"role": "assistant", "content": plan.greeting})
+        self._turn_task = asyncio.create_task(self._speak(plan.greeting), name="greeting")
+        self._log(
+            "tts.greeting.queued",
+            chars=len(plan.greeting),
+            degraded=plan.context_unavailable,
         )
-        self._history.append({"role": "assistant", "content": greeting})
-        self._turn_task = asyncio.create_task(self._speak(greeting), name="greeting")
-        self._log("tts.greeting.queued", chars=len(greeting), degraded=context_unavailable)
         return False
 
     async def _on_media(self, data: dict[str, Any]) -> None:
@@ -260,10 +233,9 @@ class CallSession:
         self._media_in += 1
         if self._media_in == 1 or self._media_in % MEDIA_LOG_EVERY == 0:
             self._log("twilio.media.in", chunks=self._media_in, samples=pcm.size)
-        if self._assistant_speaking:
-            return
         if self._vad is None:
-            self._utterance.append(pcm)
+            if not self._assistant_speaking:
+                self._utterance.append(pcm)
             return
 
         vad_started = time.perf_counter()
@@ -279,21 +251,43 @@ class CallSession:
                 self._runtime.telemetry.record_latency("vad", _ms(vad_started))
         if result.speech_started:
             self._log("vad.speech_started", probability=round(result.probability, 3))
-            if self._assistant_speaking:
-                await self._barge_in()
+            emit_event(
+                "speech_start",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+                provider=self._runtime.settings.vad_provider,
+            )
             self._utterance.append(self._pre_roll.flush())
-        if result.is_speech or self._vad_in_speech():
+        speaking = bool(result.is_speech or self._vad_in_speech())
+        if speaking:
             self._utterance.append(pcm)
             self._pre_roll.clear()
+            if self._assistant_speaking and self._runtime.settings.barge_in_enabled:
+                confirm_ms = int(getattr(self._runtime.settings, "barge_in_confirm_ms", 160) or 0)
+                if self._barge_gate.observe(
+                    pcm.size,
+                    True,
+                    confirm_ms=confirm_ms,
+                    sample_rate=self._runtime.settings.twilio_sample_rate,
+                ):
+                    await self._barge_in()
         else:
+            self._barge_gate.reset()
             self._pre_roll.append(pcm)
             if len(self._pre_roll) > self._runtime.settings.twilio_sample_rate:
                 overflow = self._pre_roll.flush()
                 self._pre_roll.append(overflow[-self._runtime.settings.twilio_sample_rate // 5 :])
         if result.speech_ended:
+            self._barge_gate.reset()
             utterance = self._utterance.flush()
             duration_ms = int(1000 * utterance.size / max(self._runtime.settings.twilio_sample_rate, 1))
             self._log("vad.speech_ended", samples=utterance.size, duration_ms=duration_ms)
+            emit_event(
+                "speech_end",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+                latency_ms=duration_ms,
+            )
             if self._turn_task and not self._turn_task.done():
                 self._turn_task.cancel()
             self._turn_task = asyncio.create_task(self._run_turn(utterance), name="turn")
@@ -301,12 +295,29 @@ class CallSession:
     def _vad_in_speech(self) -> bool:
         return bool(self._vad and getattr(self._vad, "in_speech", False))
 
+    def _playback_live(self, generation: int) -> bool:
+        return self._epoch.is_current(generation) and not self._cancel.is_set() and not self._closed
+
     async def _barge_in(self) -> None:
-        self._log("barge_in")
+        self._log("barge_in", generation=self._epoch.current)
+        self._epoch.bump()
+        self._barge_gate.reset()
+        emit_event(
+            "interruption_detected",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.settings.vad_provider,
+            generation=self._epoch.current,
+        )
         self._cancel.set()
         self._assistant_speaking = False
         if self.stream_sid:
             await self._send_text(clear_stream(self.stream_sid))
+            emit_event(
+                "audio_buffer_cleared",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+            )
         if self._turn_task and not self._turn_task.done() and self._turn_task is not asyncio.current_task():
             self._turn_task.cancel()
 
@@ -327,12 +338,28 @@ class CallSession:
                 if not text:
                     self._log("stt.empty")
                     return
-                reply = await self._think(text)
-                if self._cancel.is_set() or self._closed:
-                    self._log("turn.cancelled", after="llm")
+                combined = f"{self._pending_user} {text}".strip()
+                detector = self._runtime.turn
+                if detector is not None and not detector.is_complete(combined):
+                    self._pending_user = combined
+                    emit_event(
+                        "turn_end_detected",
+                        call_id=self.call_sid,
+                        session_id=self.stream_sid,
+                        provider=getattr(detector, "name", "unknown"),
+                        complete=False,
+                    )
+                    self._schedule_incomplete_flush()
                     return
-                if reply:
-                    await self._speak(reply)
+                self._pending_user = ""
+                emit_event(
+                    "turn_end_detected",
+                    call_id=self.call_sid,
+                    session_id=self.stream_sid,
+                    provider=getattr(detector, "name", "unknown"),
+                    complete=True,
+                )
+                await self._respond(combined)
                 self._log("turn.done", ms=_ms(turn_started))
             except asyncio.CancelledError:
                 self._log("turn.cancelled")
@@ -346,21 +373,123 @@ class CallSession:
                 if not self._cancel.is_set() and not self._closed:
                     await self._speak(FALLBACK_REPLY)
 
+    def _schedule_incomplete_flush(self) -> None:
+        if self._incomplete_task and not self._incomplete_task.done():
+            self._incomplete_task.cancel()
+        wait_s = max(0.1, self._runtime.settings.turn_incomplete_wait_ms / 1000)
+        self._incomplete_task = asyncio.create_task(self._flush_incomplete(wait_s), name="incomplete")
+
+    async def _flush_incomplete(self, wait_s: float) -> None:
+        await asyncio.sleep(wait_s)
+        text = self._pending_user
+        if not text or self._closed:
+            return
+        self._pending_user = ""
+        async with self._turn_lock:
+            await self._respond(text)
+
+    async def _respond(self, user_text: str) -> None:
+        if self._runtime.settings.llm_stream and callable(getattr(self._runtime.llm, "complete_stream", None)):
+            await self._stream_or_think(user_text)
+            return
+        reply = await self._think(user_text)
+        if self._cancel.is_set() or self._closed:
+            self._log("turn.cancelled", after="llm")
+            return
+        if reply:
+            await self._speak(reply)
+
+    async def _stream_or_think(self, user_text: str) -> None:
+        llm = self._runtime.llm
+        if llm is None:
+            raise RuntimeError("LLM non charge")
+        stream = llm.complete_stream
+        self._history.append({"role": "user", "content": user_text})
+        tools = LLM_TOOLS if self._context_ready else []
+        buffer = ""
+        spoken: list[str] = []
+        saw_tools = False
+        emit_event(
+            "llm_start",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.active_llm_provider,
+            model=self._runtime.settings.vllm_model,
+        )
+        first_token_logged = False
+        async for delta in stream(self._history, tools):
+            if self._cancel.is_set() or self._closed:
+                return
+            if delta.tool_calls:
+                saw_tools = True
+                break
+            if not delta.content:
+                continue
+            if not first_token_logged:
+                first_token_logged = True
+                emit_event(
+                    "llm_first_token",
+                    call_id=self.call_sid,
+                    session_id=self.stream_sid,
+                    provider=self._runtime.active_llm_provider,
+                )
+            buffer += delta.content
+            ready, buffer = flush_speech_chunks(buffer, self._runtime.settings.tts_chunking)
+            for chunk in ready:
+                spoken.append(chunk)
+                await self._speak(chunk)
+        if saw_tools:
+            self._history.pop()
+            reply = await self._think(user_text)
+            if reply and not self._cancel.is_set() and not self._closed:
+                await self._speak(reply)
+            return
+        remainder = buffer.strip()
+        if remainder:
+            spoken.append(remainder)
+            await self._speak(remainder)
+        full = " ".join(spoken).strip()
+        emit_event(
+            "llm_complete",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.active_llm_provider,
+        )
+        if full:
+            self._history.append({"role": "assistant", "content": full})
+            return
+        await self._speak(FALLBACK_REPLY)
+
     async def _transcribe(self, pcm8k: np.ndarray) -> str:
         stt = self._runtime.stt
         if stt is None:
             raise RuntimeError("STT non charge")
+        prepared = apply_preprocess(pcm8k, self._runtime.settings.audio_preprocess)
         pcm16k = resample_pcm16(
-            pcm8k,
+            prepared,
             self._runtime.settings.twilio_sample_rate,
             self._runtime.settings.stt_sample_rate,
         )
         self.stage = "stt"
-        self._log("stt.start", samples_8k=pcm8k.size, samples_16k=pcm16k.size)
+        self._log("stt.start", samples_8k=prepared.size, samples_16k=pcm16k.size)
+        emit_event(
+            "stt_start",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.stt_provider,
+            model=self._runtime.settings.whisper_model_size,
+        )
         started = time.perf_counter()
         try:
             text = (await stt.transcribe_utterance(pcm16k)).strip()
             self._log("stt.done", ms=_ms(started), chars=len(text))
+            emit_event(
+                "stt_final",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+                provider=self._runtime.stt_provider,
+                latency_ms=_ms(started),
+            )
             return text
         except Exception:
             self.last_error = "stt_failed"
@@ -379,6 +508,13 @@ class CallSession:
         rounds = 0
         self.stage = "llm"
         self._log("llm.start", history=len(self._history))
+        emit_event(
+            "llm_start",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.active_llm_provider,
+            model=self._runtime.settings.vllm_model,
+        )
         started = time.perf_counter()
         try:
             while rounds < self._runtime.settings.llm_max_tool_rounds:
@@ -388,12 +524,19 @@ class CallSession:
                 tools = LLM_TOOLS if self._context_ready else []
                 result: LLMResult = await llm.complete(self._history, tools)
                 await self._report_usage(result, _ms(round_started))
-                _force_caller_number(result, self._caller_number)
+                apply_forced_caller_to_result(result, self._caller_number)
                 if result.tool_calls:
-                    self._history.append(_assistant_tool_message(result))
+                    self._history.append(assistant_tool_message(result))
                     for call in result.tool_calls:
                         self.stage = f"tool:{call.name}"
                         self._log("llm.tool", name=call.name, call_id=call.id)
+                        emit_event(
+                            "tool_start",
+                            call_id=self.call_sid,
+                            session_id=self.stream_sid,
+                            provider="fastify",
+                            name=call.name,
+                        )
                         tool_started = time.perf_counter()
                         tool_result = await self._runtime.dispatcher.dispatch(
                             call.name,
@@ -406,6 +549,13 @@ class CallSession:
                             name=call.name,
                             ms=_ms(tool_started),
                             success=tool_result.get("success"),
+                        )
+                        emit_event(
+                            "tool_complete",
+                            call_id=self.call_sid,
+                            session_id=self.stream_sid,
+                            latency_ms=_ms(tool_started),
+                            name=call.name,
                         )
                         self._history.append(
                             {
@@ -440,33 +590,31 @@ class CallSession:
             raise RuntimeError("TTS non charge")
         self.stage = "tts"
         self._log("tts.start", chars=len(text))
+        emit_event(
+            "tts_start",
+            call_id=self.call_sid,
+            session_id=self.stream_sid,
+            provider=self._runtime.tts_provider,
+            model=self._runtime.settings.kokoro_voice,
+        )
         started = time.perf_counter()
+        first_audio = False
+        generation = self._epoch.current
         try:
-            pcm8k = await tts.synthesize(text)
-            if self._cancel.is_set() or self._closed or pcm8k.size == 0:
-                self._log("tts.skipped", samples=pcm8k.size, cancelled=self._cancel.is_set(), closed=self._closed)
-                return
-            self._assistant_speaking = True
-            frames_sent = 0
-            mulaw = pcm16_to_mulaw(pcm8k)
-            if not self.stream_sid or self._ws is None:
-                self._log("tts.no_stream")
-                return
-            frames = split_mulaw_frames(mulaw)
-            next_frame_at = time.monotonic()
-            for index, frame in enumerate(frames):
-                if self._cancel.is_set() or self._closed:
-                    self._log("tts.interrupted", frames=frames_sent)
-                    break
-                if index > 0:
-                    delay = next_frame_at - time.monotonic()
-                    if delay > 0:
-                        await asyncio.sleep(delay)
-                await self._send_text(media_out(self.stream_sid, _b64(frame)))
-                frames_sent += 1
-                self._media_out += 1
-                next_frame_at += OUTBOUND_FRAME_SECONDS
-            self._log("tts.done", ms=_ms(started), samples=pcm8k.size, frames=frames_sent)
+            stream = getattr(tts, "synthesize_stream", None)
+            if self._runtime.settings.tts_stream and callable(stream):
+                async for pcm8k in stream(text):
+                    first_audio = await self._play_pcm(pcm8k, started, first_audio, generation)
+            else:
+                pcm8k = await tts.synthesize(text)
+                first_audio = await self._play_pcm(pcm8k, started, first_audio, generation)
+            emit_event(
+                "tts_complete",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+                latency_ms=_ms(started),
+                provider=self._runtime.tts_provider,
+            )
         except Exception:
             self.last_error = "tts_failed"
             if self._runtime.telemetry:
@@ -478,6 +626,57 @@ class CallSession:
                 self.stage = "listening"
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_latency("tts", _ms(started))
+
+    async def _play_pcm(
+        self,
+        pcm8k: np.ndarray,
+        started: float,
+        first_audio: bool,
+        generation: int,
+    ) -> bool:
+        if not self._playback_live(generation) or pcm8k.size == 0:
+            self._log("tts.skipped", samples=pcm8k.size, cancelled=self._cancel.is_set(), closed=self._closed)
+            return first_audio
+        self._assistant_speaking = True
+        mulaw = pcm16_to_mulaw(pcm8k)
+        if not self.stream_sid or self._ws is None:
+            self._log("tts.no_stream")
+            return first_audio
+        frames = split_mulaw_frames(mulaw)
+        next_frame_at = time.monotonic()
+        frames_sent = 0
+        for index, frame in enumerate(frames):
+            if not self._playback_live(generation):
+                self._log("tts.interrupted", frames=frames_sent, generation=generation)
+                break
+            if index > 0:
+                delay = next_frame_at - time.monotonic()
+                if delay > 0:
+                    await asyncio.sleep(delay)
+            if not self._playback_live(generation):
+                self._log("tts.interrupted", frames=frames_sent, generation=generation)
+                break
+            await self._send_text(media_out(self.stream_sid, _b64(frame)))
+            frames_sent += 1
+            self._media_out += 1
+            if not first_audio:
+                first_audio = True
+                emit_event(
+                    "tts_first_audio",
+                    call_id=self.call_sid,
+                    session_id=self.stream_sid,
+                    latency_ms=_ms(started),
+                    provider=self._runtime.tts_provider,
+                )
+                emit_event(
+                    "twilio_first_audio_sent",
+                    call_id=self.call_sid,
+                    session_id=self.stream_sid,
+                    latency_ms=_ms(started),
+                )
+            next_frame_at += OUTBOUND_FRAME_SECONDS
+        self._log("tts.done", ms=_ms(started), samples=pcm8k.size, frames=frames_sent)
+        return first_audio
 
     async def _report_usage(self, result: LLMResult, latency_ms: int) -> None:
         if not self.instance_id:
@@ -526,7 +725,7 @@ class CallSession:
             "instanceId": self.instance_id,
             "streamSid": self.stream_sid,
             "callSid": self.call_sid,
-            "turns": _stt_turns(self._history),
+            "turns": stt_turns(self._history),
             "liveCreate": self._live_create,
         }
         return payload
@@ -561,28 +760,6 @@ class CallSession:
                 self._log("twilio.send_error", error=str(exc)[:200])
 
 
-def _stt_turns(history: list[dict[str, Any]]) -> list[dict[str, str]]:
-    turns: list[dict[str, str]] = []
-    for message in history:
-        role = message.get("role")
-        if role not in {"user", "assistant"}:
-            continue
-        if message.get("tool_calls"):
-            continue
-        content = message.get("content")
-        if not isinstance(content, str) or not content.strip():
-            continue
-        turns.append(
-            {
-                "role": role,
-                "content": content.strip()[:HANGUP_MAX_TURN_CHARS],
-            }
-        )
-        if len(turns) >= HANGUP_MAX_TURNS:
-            break
-    return turns
-
-
 def _b64(frame: bytes) -> str:
     return base64.b64encode(frame).decode("ascii")
 
@@ -591,48 +768,3 @@ def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
 
 
-def normalize_french_caller_number(value: Any) -> str | None:
-    raw = str(value or "").strip()
-    if not raw or raw.lower() in MASKED_CALLER_VALUES:
-        return None
-    compact = re.sub(r"[\s().-]", "", raw)
-    if compact.startswith("0033"):
-        compact = f"+33{compact[4:]}"
-    if not re.fullmatch(r"\+33[1-9]\d{8}", compact):
-        return None
-    return f"0{compact[3:]}"
-
-
-def _sanitize_identifier(value: Any) -> str | None:
-    text = str(value or "").strip()
-    if not text:
-        return None
-    sanitized = re.sub(r"[^A-Za-z0-9_.:-]", "", text)
-    return sanitized[:128] or None
-
-
-def _force_caller_number(result: LLMResult, caller_number: str | None) -> None:
-    if not caller_number:
-        return
-    for call in result.tool_calls:
-        if call.name == "create_appointment":
-            call.arguments = dict(call.arguments)
-            call.arguments["telephone"] = caller_number
-
-
-def _assistant_tool_message(result: LLMResult) -> dict[str, Any]:
-    return {
-        "role": "assistant",
-        "content": result.content or None,
-        "tool_calls": [
-            {
-                "id": call.id,
-                "type": "function",
-                "function": {
-                    "name": call.name,
-                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
-                },
-            }
-            for call in result.tool_calls
-        ],
-    }

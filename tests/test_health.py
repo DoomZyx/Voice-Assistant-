@@ -20,6 +20,7 @@ def test_health_degraded_without_engines():
         voice_eager_load=False,
         node_base_url="http://node.test",
         node_api_key="test-key",
+        llm_fallback_gpt=True,
     )
     http = httpx.AsyncClient(transport=httpx.MockTransport(_handler), base_url="http://node.test")
     node = NodeApiClient(settings, client=http)

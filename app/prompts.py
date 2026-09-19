@@ -13,6 +13,16 @@ Tu es l'assistante telephonique d'un restaurant. Tu parles uniquement francais, 
 Tes reponses sont courtes, sans markdown, sans asterisque et sans emoji.
 """
 
+PHONE_STYLE = """
+Style telephone, comme une vraie ligne resto : direct, humain, calme.
+Interdit: "Absolument", "Je serais ravi", "Bien entendu", et "Parfait" a chaque tour.
+Interdit les phrases telegraphiques : pas de reponses coupees par un point apres oui/non.
+Formule une phrase naturelle, par exemple : "Oui, pour combien de personnes ?"
+Une seule question a la fois. Une ou deux phrases, jamais hachees.
+Si le client corrige (non, plutot, finalement), utilise uniquement la derniere valeur.
+Si un outil dit qu'un creneau est indisponible, ne confirme jamais. Propose seulement les creneaux retournes.
+"""
+
 CONVERSATION_POLICY = """
 Ne repete et ne reformule jamais la reponse que le client vient de donner.
 Pose uniquement la prochaine question necessaire.
@@ -277,6 +287,40 @@ restaurantOuvert indique si le restaurant est ouvert maintenant, pas a l'heure d
 """
 
 
+def restaurant_display_name(restaurant_context: dict[str, Any] | None) -> str | None:
+    if not isinstance(restaurant_context, dict):
+        return None
+    info = restaurant_context.get("restaurantInfo")
+    if not isinstance(info, dict):
+        return None
+    name = str(info.get("nom") or "").strip()
+    return name or None
+
+
+def build_greeting(
+    restaurant_context: dict[str, Any] | None,
+    fallback: str,
+    *,
+    context_unavailable: bool = False,
+) -> str:
+    if context_unavailable:
+        return CONTEXT_UNAVAILABLE_GREETING
+    name = restaurant_display_name(restaurant_context)
+    if name:
+        return f"{name}, bonjour."
+    return fallback
+
+
+def _agent_role(restaurant_name: str | None) -> str:
+    if not restaurant_name:
+        return AGENT_ROLE
+    return f"""
+Tu es l'assistante telephonique de {restaurant_name}. Tu parles uniquement francais, a voix haute.
+Tu representes ce restaurant, pas un standard generique.
+Tes reponses sont courtes, sans markdown, sans asterisque et sans emoji.
+"""
+
+
 def has_usable_restaurant_context(restaurant_context: dict[str, Any] | None) -> bool:
     if not isinstance(restaurant_context, dict):
         return False
@@ -305,11 +349,15 @@ telephone de create_appointment. Ne demande pas son numero au client et ne le fa
     else:
         caller_policy = CALLER_NUMBER_MISSING
 
+    restaurant_name = restaurant_display_name(restaurant_context)
+    role = _agent_role(restaurant_name)
+
     if context_unavailable or not has_usable_restaurant_context(restaurant_context):
         return "\n".join(
             part.strip()
             for part in (
-                AGENT_ROLE,
+                role,
+                PHONE_STYLE,
                 CONTEXT_UNAVAILABLE_POLICY,
                 caller_policy,
             )
@@ -319,7 +367,8 @@ telephone de create_appointment. Ne demande pas son numero au client et ne le fa
     return "\n".join(
         part.strip()
         for part in (
-            AGENT_ROLE,
+            role,
+            PHONE_STYLE,
             CONVERSATION_POLICY,
             BUSINESS_POLICY_CORE,
             caller_policy,

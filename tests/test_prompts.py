@@ -2,13 +2,16 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from app.prompts import (
+    CONTEXT_UNAVAILABLE_GREETING,
     MAX_RESTAURANT_CONTEXT_CHARS,
     build_agent_instructions,
+    build_greeting,
     build_restaurant_context,
     format_clock_policy,
     format_services_policy,
     has_usable_restaurant_context,
     pack_menu_for_prompt,
+    restaurant_display_name,
 )
 
 
@@ -148,3 +151,46 @@ def test_restaurant_ouvert_means_open_now_not_requested_slot():
     )
     assert "ouvert maintenant" in text
     assert "heure demandee" in text
+
+
+def test_restaurant_display_name_reads_info():
+    assert restaurant_display_name({"restaurantInfo": {"nom": "  Handle Home  "}}) == "Handle Home"
+    assert restaurant_display_name({"restaurantInfo": {}}) is None
+    assert restaurant_display_name(None) is None
+
+
+def test_build_greeting_uses_restaurant_name():
+    assert (
+        build_greeting({"restaurantInfo": {"nom": "Handle Home"}}, "Bonjour, je vous ecoute.")
+        == "Handle Home, bonjour."
+    )
+
+
+def test_build_greeting_keeps_fallback_without_name():
+    assert build_greeting({}, "Bonjour, je vous ecoute.") == "Bonjour, je vous ecoute."
+
+
+def test_build_greeting_uses_unavailable_copy():
+    assert (
+        build_greeting(
+            {"restaurantInfo": {"nom": "Handle Home"}},
+            "Bonjour, je vous ecoute.",
+            context_unavailable=True,
+        )
+        == CONTEXT_UNAVAILABLE_GREETING
+    )
+
+
+def test_agent_instructions_sound_like_the_restaurant_not_a_switchboard():
+    text = build_agent_instructions(
+        "0612345678",
+        {
+            "restaurantInfo": {"nom": "Handle Home"},
+            "menu": {"c": {"nom": "C", "produits": [{"nom": "Burger"}]}},
+        },
+    )
+    assert "Handle Home" in text
+    assert "standard generique" in text
+    assert "naturel" in text
+    assert "Oui. Pour combien de personnes ?" not in text
+    assert "telegraphique" in text

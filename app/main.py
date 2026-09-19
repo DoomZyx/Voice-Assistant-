@@ -13,10 +13,12 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, apply_huggingface_token, get_settings
 from app.node_client import NodeApiClient, NodeApiError
+from app.pipeline.pipecat_runner import run_pipecat_session, should_use_pipecat
 from app.runtime import VoiceRuntime
 from app.session.manager import SessionManager
 from app.telemetry import VoiceTelemetry
 from app.tools.dispatcher import ToolDispatcher
+from app.twilio.protocol import parse_event
 
 logger = logging.getLogger("mysmartfood-voice")
 
@@ -199,37 +201,68 @@ def create_app(
         await websocket.accept()
         client = websocket.client
         logger.info("step=twilio.ws.accept client=%s", client)
-        manager: SessionManager = app.state.sessions
-        session = manager.create(websocket)
-        close_reason = "disconnect"
-        try:
-            while True:
-                message = await _receive_twilio_message(websocket)
-                ended = await session.handle_raw(message)
-                if ended:
-                    close_reason = "twilio.stop"
-                    break
-        except WebSocketDisconnect:
-            close_reason = "ws.disconnect"
-            logger.info("step=twilio.ws.disconnect stream=%s call=%s", session.stream_sid, session.call_sid)
-        except Exception:
-            close_reason = "error"
-            logger.exception(
-                "step=twilio.ws.error stream=%s call=%s",
-                session.stream_sid,
-                session.call_sid,
+        if should_use_pipecat(settings):
+            await _run_pipecat_media_stream(websocket, app.state.runtime)
+            return
+        if (settings.voice_orchestrator or "").strip().lower() == "pipecat":
+            logger.warning(
+                "step=pipecat.unavailable fallback=native reason=%s",
+                "pipecat-ai absent",
             )
-        finally:
-            await manager.close(websocket, reason=close_reason)
-            logger.info(
-                "step=twilio.ws.cleanup stream=%s call=%s reason=%s active=%s",
-                session.stream_sid,
-                session.call_sid,
-                close_reason,
-                manager.active_count,
-            )
+        await _run_native_media_stream(websocket, app.state.sessions)
 
     return app
+
+
+async def _run_native_media_stream(websocket: WebSocket, manager: SessionManager) -> None:
+    session = manager.create(websocket)
+    close_reason = "disconnect"
+    try:
+        while True:
+            message = await _receive_twilio_message(websocket)
+            ended = await session.handle_raw(message)
+            if ended:
+                close_reason = "twilio.stop"
+                break
+    except WebSocketDisconnect:
+        close_reason = "ws.disconnect"
+        logger.info("step=twilio.ws.disconnect stream=%s call=%s", session.stream_sid, session.call_sid)
+    except Exception:
+        close_reason = "error"
+        logger.exception(
+            "step=twilio.ws.error stream=%s call=%s",
+            session.stream_sid,
+            session.call_sid,
+        )
+    finally:
+        await manager.close(websocket, reason=close_reason)
+        logger.info(
+            "step=twilio.ws.cleanup stream=%s call=%s reason=%s active=%s",
+            session.stream_sid,
+            session.call_sid,
+            close_reason,
+            manager.active_count,
+        )
+
+
+async def _run_pipecat_media_stream(websocket: WebSocket, runtime: VoiceRuntime) -> None:
+    start_event: dict[str, Any] | None = None
+    try:
+        while start_event is None:
+            message = await _receive_twilio_message(websocket)
+            data = parse_event(message)
+            event = data.get("event")
+            if event == "start":
+                start_event = data
+                break
+            if event in {"stop", "closed"}:
+                logger.info("step=pipecat.twilio.stop_before_start")
+                return
+        await run_pipecat_session(websocket, runtime, start_event)
+    except WebSocketDisconnect:
+        logger.info("step=pipecat.ws.disconnect")
+    except Exception:
+        logger.exception("step=pipecat.ws.error")
 
 
 async def _receive_twilio_message(websocket: WebSocket) -> str | bytes:
@@ -303,25 +336,32 @@ def _build_runtime(settings: Settings, node: NodeApiClient) -> VoiceRuntime:
         )
     try:
         from app.llm.fallback import build_llm
-        from app.stt.faster_whisper import FasterWhisperSTT
-        from app.tts.kokoro import KokoroTTS
-        from app.vad.silero import load_silero_model
+        from app.providers import build_engines
 
-        vad_model = load_silero_model(settings)
-        stt = FasterWhisperSTT(settings)
-        tts = KokoroTTS(settings)
+        bundle = build_engines(settings, eager=True)
         llm = build_llm(settings, telemetry)
-        logger.info("moteurs vocaux precharges")
+        logger.info(
+            "moteurs vocaux precharges stt=%s tts=%s llm=%s turn=%s orchestrator=%s",
+            bundle.stt_provider,
+            bundle.tts_provider,
+            bundle.llm_provider,
+            bundle.turn_provider,
+            bundle.orchestrator,
+        )
         return VoiceRuntime(
             settings=settings,
             node=node,
             dispatcher=dispatcher,
             llm=llm,
-            stt=stt,
-            tts=tts,
-            vad_model=vad_model,
+            stt=bundle.stt,
+            tts=bundle.tts,
+            vad_model=bundle.vad_model,
             engines_ready=True,
             telemetry=telemetry,
+            turn=bundle.turn,
+            stt_provider=bundle.stt_provider,
+            tts_provider=bundle.tts_provider,
+            llm_provider_name=bundle.llm_provider,
         )
     except Exception as exc:
         logger.exception("chargement moteurs vocal echoue")

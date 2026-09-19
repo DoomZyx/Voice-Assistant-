@@ -11,11 +11,25 @@ from app.config import Settings
 logger = logging.getLogger("mysmartfood-voice.stt")
 
 
+def whisper_transcribe_options(settings: Settings) -> dict:
+    prompt = (settings.whisper_initial_prompt or "").strip() or None
+    return {
+        "language": settings.whisper_language,
+        "vad_filter": False,
+        "beam_size": max(1, int(settings.whisper_beam_size)),
+        "condition_on_previous_text": False,
+        "temperature": 0.0,
+        "initial_prompt": prompt,
+    }
+
+
 class FasterWhisperSTT:
     def __init__(self, settings: Settings) -> None:
         from faster_whisper import WhisperModel
 
+        self._settings = settings
         self._language = settings.whisper_language
+        self._initial_prompt = (settings.whisper_initial_prompt or "").strip() or None
         self._lock = asyncio.Lock()
         self._model = WhisperModel(
             settings.whisper_model_size,
@@ -37,9 +51,7 @@ class FasterWhisperSTT:
         def _run() -> str:
             segments, _info = self._model.transcribe(
                 audio,
-                language=self._language,
-                vad_filter=False,
-                beam_size=1,
+                **whisper_transcribe_options(self._settings),
             )
             return "".join(segment.text for segment in segments).strip()
 

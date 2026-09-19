@@ -70,6 +70,26 @@ class FallbackLLM:
                     self._telemetry.record_error("llm_fallback")
                 raise
 
+    async def complete_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ):
+        stream = getattr(self._primary, "complete_stream", None)
+        if callable(stream):
+            try:
+                async for chunk in stream(messages, tools):
+                    self.active_provider = "vllm"
+                    yield chunk
+                return
+            except Exception:
+                if self._telemetry:
+                    self._telemetry.record_error("llm_primary")
+                if self._fallback is None:
+                    raise
+        result = await self.complete(messages, tools)
+        yield result
+
 
 def build_llm(
     settings: Settings,

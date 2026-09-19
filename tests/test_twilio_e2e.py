@@ -66,6 +66,10 @@ def _build_app(stt=None, llm=None, tts=None):
         twilio_auth_token=STREAM_SECRET,
     )
     node = FakeNode()
+    node.voice_contexts[INSTANCE_ID] = {
+        "restaurantInfo": {"nom": "Chez E2E"},
+        "menu": {"plats": {"nom": "Plats", "produits": [{"nom": "Salade", "prix": 10}]}},
+    }
     runtime = VoiceRuntime(
         settings=settings,
         node=node,

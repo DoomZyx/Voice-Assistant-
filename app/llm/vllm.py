@@ -89,6 +89,29 @@ class VLLMProvider:
             model=str(data.get("model") or self._settings.vllm_model or ""),
         )
 
+    async def complete_stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+    ):
+        payload: dict[str, Any] = {
+            "model": self._settings.vllm_model,
+            "messages": messages,
+            "temperature": self._settings.llm_temperature,
+            "max_tokens": self._settings.llm_max_tokens,
+            "stream": True,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+        async with self._client.stream("POST", "/chat/completions", json=payload) as response:
+            if response.status_code >= 400:
+                logger.error("step=llm.stream.error provider=vllm status=%s", response.status_code)
+                response.raise_for_status()
+            async for line in response.aiter_lines():
+                for chunk in iter_chat_completion_chunks([line]):
+                    yield chunk
+
 
 def model_id_error(configured: str, served: list[str]) -> str | None:
     """None si VLLM_MODEL est exactement un id servi par GET /v1/models."""
@@ -145,6 +168,34 @@ def _parse_json_object(raw: str) -> dict[str, Any] | None:
     except json.JSONDecodeError:
         return None
     return parsed if isinstance(parsed, dict) else None
+
+
+def iter_chat_completion_chunks(lines: list[str]) -> list[LLMResult]:
+    chunks: list[LLMResult] = []
+    for raw in lines:
+        line = raw.strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if not payload or payload == "[DONE]":
+            continue
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        delta = ((data.get("choices") or [{}])[0].get("delta") or {})
+        usage = data.get("usage") or {}
+        chunks.append(
+            LLMResult(
+                content=str(delta.get("content") or ""),
+                tool_calls=_parse_tool_calls(delta.get("tool_calls") or []),
+                input_tokens=int(usage.get("prompt_tokens") or 0),
+                output_tokens=int(usage.get("completion_tokens") or 0),
+                total_tokens=int(usage.get("total_tokens") or 0),
+                model=str(data.get("model") or ""),
+            )
+        )
+    return chunks
 
 
 def _parse_tool_calls(raw: list[Any]) -> list[ToolCall]:
