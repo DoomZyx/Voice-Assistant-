@@ -9,6 +9,7 @@ from app.audio.preprocess import peak_normalize_pcm16
 from app.audio.resample import float32_to_pcm16
 from livekit_agent.config import LiveKitSettings
 from livekit_agent.tts.base import NativeTTS
+from livekit_agent.observability.audio_path import log_tts_resample
 from livekit_agent.tts.pcm import pcm16_at_rate, pcm16_chunks
 
 KOKORO_MODEL_URL = (
@@ -111,6 +112,7 @@ def build_kokoro_tts(settings: LiveKitSettings, engine: NativeTTS | None = None)
             )
             pcm, rate = await runtime.synthesize_native(self._input_text)
             used_rate = int(rate or sample_rate)
+            log_tts_resample(kokoro_hz=used_rate, emit_hz=sample_rate)
             pcm = pcm16_at_rate(pcm, used_rate, sample_rate)
             for chunk in pcm16_chunks(pcm, sample_rate=sample_rate):
                 output_emitter.push(chunk)

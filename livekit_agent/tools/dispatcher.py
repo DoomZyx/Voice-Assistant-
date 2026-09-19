@@ -10,6 +10,12 @@ from livekit_agent.tools import restaurant as restaurant_tools
 from livekit_agent.tools.http import FastifyToolsClient
 from livekit_agent.tools.reservations import not_implemented
 
+_SESSION_ONLY_KEYS = frozenset({"restaurant_id", "tenant_id", "instance_id", "instanceId"})
+
+
+def session_tool_arguments(arguments: dict[str, Any] | None) -> dict[str, Any]:
+    return {key: value for key, value in dict(arguments or {}).items() if key not in _SESSION_ONLY_KEYS}
+
 
 class ToolDispatcher:
     def __init__(self, client: FastifyToolsClient, tenant_id: str) -> None:
@@ -20,7 +26,10 @@ class ToolDispatcher:
         await self._client.aclose()
 
     async def dispatch(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        payload = dict(arguments or {})
+        if not str(self._tenant_id or "").strip():
+            emit_event("tool.denied", tool=name, error="TENANT_UNRESOLVED")
+            return {"success": False, "error": "TENANT_UNRESOLVED"}
+        payload = session_tool_arguments(arguments)
         started = time.perf_counter()
         emit_event("tool.start", tool=name, restaurant_id=self._tenant_id)
         result = await self._dispatch(name, payload)

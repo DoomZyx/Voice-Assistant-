@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from livekit_agent.config import LiveKitSettings
+from livekit_agent.observability.audio_path import log_stt_resample
 from livekit_agent.stt.base import UtteranceSTT
 from livekit_agent.stt.pcm import frames_to_pcm16, resample_to_16k
 
@@ -30,6 +31,8 @@ def build_whisper_engine(settings: LiveKitSettings) -> UtteranceSTT:
 
 async def transcribe_audio_frames(engine: UtteranceSTT, frames: list[tuple[bytes, int, int]]) -> str:
     pcm, rate = frames_to_pcm16(frames)
+    channels = frames[0][2] if frames else 1
+    log_stt_resample(inbound_hz=rate, channels=channels, whisper_hz=16000)
     return await engine.transcribe_utterance(resample_to_16k(pcm, rate))
 
 

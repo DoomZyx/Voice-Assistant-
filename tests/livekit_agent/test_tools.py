@@ -57,9 +57,9 @@ def _handler(request: httpx.Request) -> httpx.Response:
         except ValueError:
             body = {}
     SEEN.append((request.method, path, body))
-    if path.endswith("/api/voice/context/tenant-1") and not path.endswith("/snapshot"):
+    if path == "/api/voice/context/tenant-1":
         return httpx.Response(200, json=RESTAURANT_CONTEXT)
-    if path.endswith("/snapshot"):
+    if path == "/api/voice/context/tenant-1/snapshot":
         return httpx.Response(200, json=SNAPSHOT)
     if path.endswith("/api/orders/ai/create") and request.method == "POST":
         return httpx.Response(201, json={"success": True, "data": {"_id": "order-01"}})
@@ -176,4 +176,49 @@ async def test_unknown_and_reservation_stubs():
     reservation = await dispatcher.dispatch("create_reservation", {"date": "2026-09-20"})
     assert reservation["success"] is False
     assert reservation["error"] == "NOT_IMPLEMENTED"
+    await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_llm_cannot_switch_session_tenant():
+    dispatcher = ToolDispatcher(_client(), tenant_id="tenant-1")
+    result = await dispatcher.dispatch(
+        "get_restaurant_info",
+        {"restaurant_id": "tenant-2", "tenant_id": "tenant-2", "instanceId": "tenant-2"},
+    )
+    assert result["success"] is True
+    assert result["data"]["nom"] == "Le Comptoir"
+    assert all("/tenant-2" not in path for _method, path, _body in SEEN)
+    assert any(path.endswith("/api/voice/context/tenant-1") for _method, path, _body in SEEN)
+    await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_did_tenant_a_cannot_read_or_order_as_b():
+    dispatcher = ToolDispatcher(_client(), tenant_id="tenant-2")
+    info = await dispatcher.dispatch("get_restaurant_info", {})
+    assert info["success"] is False
+    created = await dispatcher.dispatch(
+        "create_order",
+        {
+            "name": "Ada",
+            "telephone": "0600000000",
+            "date": "2026-09-20",
+            "time": "19:00",
+            "restaurant_id": "tenant-1",
+            "commandes": [{"nom": "Burger Classic", "quantite": 1}],
+        },
+    )
+    assert created["success"] is False
+    assert not any(path.endswith("/api/orders/ai/create") for _method, path, _body in SEEN)
+    await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unresolved_tenant_never_calls_fastify():
+    dispatcher = ToolDispatcher(_client(), tenant_id="")
+    result = await dispatcher.dispatch("get_restaurant_info", {"restaurant_id": "tenant-1"})
+    assert result["success"] is False
+    assert result["error"] == "TENANT_UNRESOLVED"
+    assert SEEN == []
     await dispatcher.aclose()

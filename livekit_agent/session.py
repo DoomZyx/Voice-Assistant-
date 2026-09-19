@@ -54,7 +54,13 @@ def extract_call_identity(
     caller = normalize_phone(_attr(attributes, "sip.phoneNumber", "sip.from"))
     trunk = normalize_phone(_attr(attributes, "sip.trunkPhoneNumber", "sip.to"))
     did_map = parse_did_map(settings.sip_did_tenant_map)
-    restaurant_id = did_map.get(trunk) or did_map.get(caller) or settings.restaurant_id or ""
+    mapped = did_map.get(trunk) or did_map.get(caller) or ""
+    if mapped:
+        restaurant_id = mapped
+    elif did_map:
+        restaurant_id = ""
+    else:
+        restaurant_id = settings.restaurant_id or ""
     return CallIdentity(
         call_id=call_id,
         session_id=room_name,

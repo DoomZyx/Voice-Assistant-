@@ -5,6 +5,7 @@ from typing import Any
 
 from livekit_agent.config import LiveKitSettings
 from livekit_agent.llm.client import build_llm
+from livekit_agent.observability.audio_path import log_session_audio_contract
 from livekit_agent.observability.logging import emit_event
 from livekit_agent.observability.metrics import CallObserver
 from livekit_agent.observability.resources import SESSIONS
@@ -89,10 +90,16 @@ def _load_pipeline(settings: LiveKitSettings):
 
 
 async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
-    identity = bind_call_context(ctx, settings, await _sip_attributes(ctx))
+    sip_attributes = await _sip_attributes(ctx)
+    identity = bind_call_context(ctx, settings, sip_attributes)
     observer = CallObserver(identity)
     concurrent = SESSIONS.register(identity.session_id)
     emit_event("session.start", concurrent_sessions=concurrent, **observer._ids())
+    log_session_audio_contract(
+        identity,
+        sip_attributes=sip_attributes,
+        kokoro_hz=settings.tts_sample_rate,
+    )
 
     plan = plan_session(settings, identity.restaurant_id)
     dispatcher = plan.dispatcher
@@ -111,8 +118,30 @@ async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
         is_final = bool(getattr(ev, "is_final", True))
         observer.on_user_transcript(str(text), is_final=is_final)
 
-    session.on("metrics_collected", _on_metrics)
-    session.on("user_input_transcribed", _on_transcript)
+    def _on_agent_state(ev: Any) -> None:
+        emit_event(
+            "turn.agent_state",
+            state=getattr(ev, "new_state", None) or getattr(ev, "state", None),
+            **observer._ids(),
+        )
+
+    def _on_user_state(ev: Any) -> None:
+        emit_event(
+            "turn.user_state",
+            state=getattr(ev, "new_state", None) or getattr(ev, "state", None),
+            **observer._ids(),
+        )
+
+    for event_name, handler in (
+        ("metrics_collected", _on_metrics),
+        ("user_input_transcribed", _on_transcript),
+        ("agent_state_changed", _on_agent_state),
+        ("user_state_changed", _on_user_state),
+    ):
+        try:
+            session.on(event_name, handler)
+        except Exception:
+            emit_event("turn.hook_missing", hook=event_name, **observer._ids())
 
     try:
         await session.start(room=getattr(ctx, "room", None), agent=agent)

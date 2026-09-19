@@ -37,6 +37,21 @@ def test_restaurant_id_from_did_map():
     assert identity.call_id == "sip-1"
 
 
+def test_unknown_did_does_not_use_default_tenant_when_map_exists():
+    settings = LiveKitSettings(
+        _env_file=None,
+        restaurant_id="fallback-tenant",
+        sip_did_tenant_map='{"+33111111111": "tenant-a"}',
+    )
+    identity = extract_call_identity(
+        settings,
+        room_name="call-unknown",
+        sip_attributes={"sip.trunkPhoneNumber": "+33999999999", "sip.callID": "sip-x"},
+    )
+    assert identity.restaurant_id == ""
+    assert identity.trunk_number == "+33999999999"
+
+
 def test_identity_fallbacks_when_sip_missing():
     settings = LiveKitSettings(_env_file=None, restaurant_id="dev-tenant")
     identity = extract_call_identity(settings, room_name="room-1", sip_attributes={})
