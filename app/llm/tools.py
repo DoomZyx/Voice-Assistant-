@@ -7,7 +7,8 @@ CHECK_AVAILABILITY = {
         "description": (
             "Verifier si une date est ouverte. La reponse contient des fenetres debut/fin, "
             "pas une liste a lire, plus remainingCoversMidi et remainingCoversSoir. "
-            "Ne recites jamais tous les creneaux. Deux services : MIDI 11h-15h, SOIR 18h-00h. "
+            "Les plages MIDI/SOIR viennent des horaires du restaurant, pas de valeurs inventees. "
+            "Ne recites jamais tous les creneaux. "
             "A n'utiliser que si l'heure manque, est hors horaires, ou si create_appointment "
             "renvoie COUVERTS_INSUFFISANTS."
         ),
@@ -31,7 +32,8 @@ CREATE_APPOINTMENT = {
         "description": (
             "Creer une reservation de table ou une commande a emporter apres confirmation client. "
             "Ne pas inventer de plat. Reservation : nombrePersonnes obligatoire, commandes []. "
-            "Commande a emporter : commandes = liste de plats (nom + quantite). "
+            "Commande a emporter : commandes = liste de plats (nom + quantite) presents au menu. "
+            "Le serveur revalide ouverture et disponibilite produits juste avant creation. "
             "Apres succes, confirme en une phrase courte sans lire d'identifiant."
         ),
         "parameters": {
@@ -45,7 +47,7 @@ CREATE_APPOINTMENT = {
                 "date": {"type": "string", "description": "Date YYYY-MM-DD"},
                 "time": {
                     "type": "string",
-                    "description": "Heure HH:MM. MIDI 11:00-14:59, SOIR 18:00-23:59",
+                    "description": "Heure HH:MM dans une plage d'ouverture du restaurant",
                 },
                 "type": {
                     "type": "string",

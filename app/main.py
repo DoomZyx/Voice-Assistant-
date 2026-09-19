@@ -156,8 +156,7 @@ def create_app(
         payload, _ = await health_snapshot()
         return payload
 
-    @app.get("/monitoring")
-    async def monitoring(x_api_key: str | None = Header(default=None)):
+    def require_internal_api_key(x_api_key: str | None = Header(default=None)) -> None:
         configured_key = settings.node_api_key.strip()
         provided_key = (x_api_key or "").strip()
         if (
@@ -166,18 +165,30 @@ def create_app(
             or not secrets.compare_digest(configured_key, provided_key)
         ):
             raise HTTPException(status_code=401, detail="Clé API interne invalide")
+
+    @app.get("/monitoring")
+    async def monitoring(x_api_key: str | None = Header(default=None)):
+        require_internal_api_key(x_api_key)
         payload, _ = await health_snapshot(include_active_sessions=True)
         return payload
 
     @app.post("/v1/tools/check-availability")
-    async def check_availability(body: AvailabilityQuery):
+    async def check_availability(
+        body: AvailabilityQuery,
+        x_api_key: str | None = Header(default=None),
+    ):
+        require_internal_api_key(x_api_key)
         try:
             return await app.state.node.check_availability(body.date)
         except NodeApiError as exc:
             raise HTTPException(status_code=exc.status_code or 502, detail=str(exc)) from exc
 
     @app.post("/v1/tools/create-appointment")
-    async def create_appointment(body: AppointmentPayload):
+    async def create_appointment(
+        body: AppointmentPayload,
+        x_api_key: str | None = Header(default=None),
+    ):
+        require_internal_api_key(x_api_key)
         try:
             return await app.state.node.create_appointment(body.model_dump())
         except NodeApiError as exc:

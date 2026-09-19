@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import logging
+import unicodedata
 from typing import Any
 
 from app.node_client import NodeApiClient, NodeApiError
 
 logger = logging.getLogger("mysmartfood-voice.tools")
+
+
+def _norm_name(value: Any) -> str:
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return " ".join(text.casefold().split())
 
 
 class ToolDispatcher:
@@ -56,10 +63,75 @@ class ToolDispatcher:
         arguments: dict[str, Any],
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
+        gate = await self._gate_live_availability(arguments, tenant_id)
+        if gate is not None:
+            return gate
         try:
             return await self._node.create_appointment(arguments, tenant_id=tenant_id)
         except NodeApiError as exc:
             return map_create_error(exc)
+
+    async def _gate_live_availability(
+        self,
+        arguments: dict[str, Any],
+        tenant_id: str | None,
+    ) -> dict[str, Any] | None:
+        """Revalide les produits a emporter avant create (anti stale mid-call).
+
+        Ne bloque PAS sur isOpenNow : une resa/commande pour plus tard reste valide
+        meme si le restaurant est ferme au moment de l'appel.
+        """
+        if not tenant_id:
+            return None
+        get_snapshot = getattr(self._node, "get_voice_snapshot", None)
+        if not callable(get_snapshot):
+            return None
+        appointment_type = str(arguments.get("type") or "").lower()
+        is_order = "commande" in appointment_type or "emporter" in appointment_type
+        if not is_order:
+            return None
+        commandes = arguments.get("commandes") or []
+        if not isinstance(commandes, list) or not commandes:
+            return None
+        try:
+            snapshot = await get_snapshot(tenant_id)
+        except NodeApiError:
+            return {
+                "success": False,
+                "error": "SNAPSHOT_INDISPONIBLE",
+                "message": (
+                    "Impossible de verifier le menu en direct. "
+                    "Propose de rappeler plus tard, sans detail technique."
+                ),
+            }
+        if not isinstance(snapshot, dict):
+            return None
+        products = snapshot.get("products") or []
+        available = {
+            _norm_name(item.get("nom"))
+            for item in products
+            if isinstance(item, dict) and item.get("nom")
+        }
+        missing: list[str] = []
+        for line in commandes:
+            if not isinstance(line, dict):
+                continue
+            nom = str(line.get("nom") or "").strip()
+            if not nom:
+                continue
+            if _norm_name(nom) not in available:
+                missing.append(nom)
+        if missing:
+            return {
+                "success": False,
+                "error": "PRODUIT_INDISPONIBLE",
+                "missing": missing,
+                "message": (
+                    f"Plat(s) indisponible(s) : {', '.join(missing)}. "
+                    "Propose un autre plat du menu, sans inventer."
+                ),
+            }
+        return None
 
 
 def map_create_error(exc: NodeApiError) -> dict[str, Any]:

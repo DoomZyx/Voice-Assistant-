@@ -17,6 +17,7 @@ class Settings(BaseSettings):
 
     node_base_url: str = "http://localhost:8080"
     node_api_key: str = ""
+    twilio_auth_token: str = ""
 
     llm_provider: str = "vllm"
     vllm_base_url: str = "http://localhost:8000/v1"

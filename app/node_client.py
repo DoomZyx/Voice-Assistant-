@@ -58,6 +58,18 @@ class NodeApiClient:
             raise NodeApiError("Contexte vocal invalide", response.status_code, payload)
         return payload["data"]
 
+    async def get_voice_snapshot(self, instance_id: str) -> dict[str, Any]:
+        safe_instance_id = quote(instance_id, safe="")
+        response = await self._client.get(
+            f"/api/voice/context/{safe_instance_id}/snapshot",
+            headers=self._tenant_headers(instance_id),
+        )
+        self._raise_for_status(response, "snapshot vocal")
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            raise NodeApiError("Snapshot vocal invalide", response.status_code, payload)
+        return payload["data"]
+
     async def check_availability(self, date: str, tenant_id: str | None = None) -> dict[str, Any]:
         headers = self._tenant_headers(tenant_id)
         orders, reservations = await asyncio.gather(

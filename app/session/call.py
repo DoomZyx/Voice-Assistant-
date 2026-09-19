@@ -22,7 +22,12 @@ from app.audio.codec import (
 from app.audio.resample import resample_pcm16
 from app.llm import LLMResult
 from app.llm.tools import LLM_TOOLS
-from app.prompts import build_agent_instructions
+from app.prompts import (
+    CONTEXT_UNAVAILABLE_GREETING,
+    build_agent_instructions,
+    has_usable_restaurant_context,
+)
+from app.stream_token import stream_token_failure_reason
 from app.twilio.protocol import clear_stream, media_out, parse_event
 
 if TYPE_CHECKING:
@@ -33,7 +38,7 @@ logger = logging.getLogger("mysmartfood-voice.session")
 FALLBACK_REPLY = "Je n'ai pas compris. Pouvez-vous repeter ?"
 MIN_UTTERANCE_SAMPLES_8K = 1600  # 200 ms
 MEDIA_LOG_EVERY = 50
-VOICE_CONTEXT_TIMEOUT_SECONDS = 2.0
+VOICE_CONTEXT_TIMEOUT_SECONDS = 3.0
 HANGUP_MAX_TURNS = 40
 HANGUP_MAX_TURN_CHARS = 2000
 MASKED_CALLER_VALUES = {"anonymous", "blocked", "private", "restricted", "unknown", "withheld"}
@@ -65,6 +70,7 @@ class CallSession:
         self._media_in = 0
         self._media_out = 0
         self._vad = runtime.vad_model.new_session(runtime.settings) if runtime.vad_model else None
+        self._context_ready = False
 
     @property
     def closed(self) -> bool:
@@ -104,8 +110,7 @@ class CallSession:
             self._log("twilio.connected", protocol=data.get("protocol"), version=data.get("version"))
             return False
         if event == "start":
-            await self._on_start(data)
-            return False
+            return await self._on_start(data)
         if event == "media":
             await self._on_media(data)
             return False
@@ -163,7 +168,7 @@ class CallSession:
             live_create=bool(self._live_create),
         )
 
-    async def _on_start(self, data: dict[str, Any]) -> None:
+    async def _on_start(self, data: dict[str, Any]) -> bool:
         start = data.get("start") or {}
         self.stream_sid = start.get("streamSid")
         self.call_sid = start.get("callSid")
@@ -171,8 +176,25 @@ class CallSession:
         if not isinstance(custom_parameters, dict):
             custom_parameters = {}
         self._caller_number = normalize_french_caller_number(custom_parameters.get("callerNumber"))
-        self.instance_id = _sanitize_identifier(custom_parameters.get("instanceId"))
+        requested_id = _sanitize_identifier(custom_parameters.get("instanceId"))
+        if requested_id:
+            token = (
+                custom_parameters.get("streamToken")
+                or custom_parameters.get("token")
+                or custom_parameters.get("StreamToken")
+                or ""
+            )
+            secret = str(self._runtime.settings.twilio_auth_token or "").strip()
+            reason = stream_token_failure_reason(requested_id, token, secret)
+            if reason:
+                self.last_error = "stream_token_rejected"
+                self.instance_id = None
+                self.stage = "rejected"
+                self._log("twilio.start.rejected", reason=reason)
+                return True
+        self.instance_id = requested_id
         restaurant_context = None
+        context_unavailable = False
         if self.instance_id:
             context_started = time.perf_counter()
             try:
@@ -181,6 +203,7 @@ class CallSession:
                     timeout=VOICE_CONTEXT_TIMEOUT_SECONDS,
                 )
             except Exception:
+                context_unavailable = True
                 self.last_error = "voice_context_unavailable"
                 if self._runtime.telemetry:
                     self._runtime.telemetry.record_error("voice_context")
@@ -191,11 +214,21 @@ class CallSession:
                         "voice_context",
                         _ms(context_started),
                     )
+        if context_unavailable or (
+            self.instance_id and not has_usable_restaurant_context(restaurant_context)
+        ):
+            context_unavailable = True
+            self._context_ready = False
+            if self.last_error is None:
+                self.last_error = "voice_context_unavailable"
+        else:
+            self._context_ready = True
         self._history[0] = {
             "role": "system",
             "content": build_agent_instructions(
                 self._caller_number,
                 restaurant_context,
+                context_unavailable=context_unavailable and bool(self.instance_id),
             ),
         }
         self.stage = "greeting"
@@ -205,13 +238,19 @@ class CallSession:
             encoding=media_format.get("encoding"),
             sample_rate=media_format.get("sampleRate"),
             engines_ready=self._runtime.engines_ready,
+            context_ready=self._context_ready,
         )
         if not self._runtime.engines_ready:
             self._log("engines.not_ready")
-        greeting = self._runtime.settings.greeting_text
+        greeting = (
+            CONTEXT_UNAVAILABLE_GREETING
+            if (context_unavailable and bool(self.instance_id))
+            else self._runtime.settings.greeting_text
+        )
         self._history.append({"role": "assistant", "content": greeting})
         self._turn_task = asyncio.create_task(self._speak(greeting), name="greeting")
-        self._log("tts.greeting.queued", chars=len(greeting))
+        self._log("tts.greeting.queued", chars=len(greeting), degraded=context_unavailable)
+        return False
 
     async def _on_media(self, data: dict[str, Any]) -> None:
         payload = (data.get("media") or {}).get("payload")
@@ -346,7 +385,8 @@ class CallSession:
                 if self._cancel.is_set():
                     return ""
                 round_started = time.perf_counter()
-                result: LLMResult = await llm.complete(self._history, LLM_TOOLS)
+                tools = LLM_TOOLS if self._context_ready else []
+                result: LLMResult = await llm.complete(self._history, tools)
                 await self._report_usage(result, _ms(round_started))
                 _force_caller_number(result, self._caller_number)
                 if result.tool_calls:

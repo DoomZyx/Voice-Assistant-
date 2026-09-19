@@ -15,6 +15,7 @@ from app.config import Settings
 from app.llm.vllm import VLLMProvider
 from app.main import create_app
 from app.runtime import VoiceRuntime
+from app.stream_token import create_stream_token
 from app.tools.dispatcher import ToolDispatcher
 from tests.fakes import FakeNode, FakeSTT, FakeTTS, FakeVadModel
 
@@ -40,7 +41,13 @@ def _start_message() -> str:
                     "sampleRate": 8000,
                     "channels": 1,
                 },
-                "customParameters": {"instanceId": "restaurant-local"},
+                "customParameters": {
+                    "instanceId": "restaurant-local",
+                    "streamToken": create_stream_token(
+                        "restaurant-local",
+                        os.getenv("TWILIO_AUTH_TOKEN", "test-twilio-token"),
+                    ),
+                },
             },
         }
     )
@@ -68,6 +75,7 @@ def test_fake_twilio_websocket_uses_real_local_vllm():
         vllm_api_key=os.getenv("VLLM_API_KEY", ""),
         llm_temperature=0,
         llm_max_tokens=80,
+        twilio_auth_token=os.getenv("TWILIO_AUTH_TOKEN", "test-twilio-token"),
     )
     node = FakeNode()
     llm = VLLMProvider(settings)

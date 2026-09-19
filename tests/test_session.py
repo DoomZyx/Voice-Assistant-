@@ -9,12 +9,20 @@ from app.config import Settings
 from app.llm import LLMResult, ToolCall
 from app.runtime import VoiceRuntime
 from app.session.call import CallSession, normalize_french_caller_number
+from app.stream_token import create_stream_token
 from app.tools.dispatcher import ToolDispatcher
 from tests.fakes import FakeLLM, FakeSTT, FakeTTS, FakeVadModel, FakeWebSocket, FakeNode
 
 
+STREAM_SECRET = "test-twilio-token"
+
+
 def _runtime(llm=None, stt=None, tts=None) -> VoiceRuntime:
-    settings = Settings(voice_eager_load=False, greeting_text="Bonjour, je vous ecoute.")
+    settings = Settings(
+        voice_eager_load=False,
+        greeting_text="Bonjour, je vous ecoute.",
+        twilio_auth_token=STREAM_SECRET,
+    )
     node = FakeNode()
     return VoiceRuntime(
         settings=settings,
@@ -58,6 +66,30 @@ async def test_greeting_on_start():
     await session._turn_task
     assert tts.texts[0] == "Bonjour, je vous ecoute."
     assert any('"event": "media"' in item for item in ws.sent)
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_start_with_instance_id_rejects_missing_stream_token():
+    runtime = _runtime()
+    runtime.node.voice_contexts["restaurant-42"] = {"restaurantInfo": {"nom": "Secret"}}
+    session = CallSession(FakeWebSocket(), runtime)
+    ended = await session.handle_raw(
+        json.dumps(
+            {
+                "event": "start",
+                "start": {
+                    "streamSid": "MZ1",
+                    "customParameters": {"instanceId": "restaurant-42"},
+                },
+            }
+        )
+    )
+    assert ended is True
+    assert session.instance_id is None
+    assert session.last_error == "stream_token_rejected"
+    assert session._turn_task is None
+    assert "Secret" not in session._history[0]["content"]
     await session.close()
 
 
@@ -108,6 +140,7 @@ async def test_twilio_context_forces_caller_number_in_create_appointment():
             "customParameters": {
                 "callerNumber": "+33612345678",
                 "instanceId": "restaurant-42",
+                "streamToken": create_stream_token("restaurant-42", STREAM_SECRET),
             },
         },
     }
@@ -196,7 +229,10 @@ async def test_hangup_without_create_reports_no_live_create():
                 "start": {
                     "streamSid": "MZ1",
                     "callSid": "CA1",
-                    "customParameters": {"instanceId": "restaurant-42"},
+                    "customParameters": {
+                        "instanceId": "restaurant-42",
+                        "streamToken": create_stream_token("restaurant-42", STREAM_SECRET),
+                    },
                 },
             }
         )
@@ -207,3 +243,32 @@ async def test_hangup_without_create_reports_no_live_create():
     assert hangup["liveCreate"] is None
     assert hangup["instanceId"] == "restaurant-42"
     assert hangup["turns"]
+
+
+@pytest.mark.asyncio
+async def test_fail_soft_when_context_missing():
+    from app.prompts import CONTEXT_UNAVAILABLE_GREETING
+
+    runtime = _runtime()
+    session = CallSession(FakeWebSocket(), runtime)
+    await session.handle_raw(
+        json.dumps(
+            {
+                "event": "start",
+                "start": {
+                    "streamSid": "MZ1",
+                    "callSid": "CA1",
+                    "customParameters": {
+                        "instanceId": "restaurant-42",
+                        "streamToken": create_stream_token("restaurant-42", STREAM_SECRET),
+                    },
+                },
+            }
+        )
+    )
+    await session._turn_task
+    assert session._context_ready is False
+    assert session.last_error == "voice_context_unavailable"
+    assert CONTEXT_UNAVAILABLE_GREETING in session._history[1]["content"]
+    assert "indisponibles" in session._history[0]["content"]
+    await session.close()

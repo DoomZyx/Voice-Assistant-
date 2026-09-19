@@ -13,12 +13,15 @@ from app.config import Settings
 from app.llm import LLMResult
 from app.main import create_app
 from app.runtime import VoiceRuntime
+from app.stream_token import create_stream_token
 from app.tools.dispatcher import ToolDispatcher
 from tests.fakes import FakeLLM, FakeNode, FakeSTT, FakeTTS, FakeVadModel
 
 STREAM_SID = "MZ_E2E"
 CALL_SID = "CA_E2E"
 GREETING_FRAMES = 3
+STREAM_SECRET = "test-twilio-token"
+INSTANCE_ID = "restaurant-e2e"
 
 
 def _media_msg(samples: int = 2000) -> str:
@@ -47,7 +50,8 @@ def _start_msg() -> str:
                 "mediaFormat": {"encoding": "audio/x-mulaw", "sampleRate": 8000, "channels": 1},
                 "customParameters": {
                     "callerNumber": "+33612345678",
-                    "instanceId": "restaurant-e2e",
+                    "instanceId": INSTANCE_ID,
+                    "streamToken": create_stream_token(INSTANCE_ID, STREAM_SECRET),
                 },
             },
         }
@@ -59,6 +63,7 @@ def _build_app(stt=None, llm=None, tts=None):
         voice_eager_load=False,
         greeting_text="Bonjour, je vous ecoute.",
         node_api_key="test-key",
+        twilio_auth_token=STREAM_SECRET,
     )
     node = FakeNode()
     runtime = VoiceRuntime(

@@ -85,9 +85,29 @@ class FakeNode:
         self.appointments: list[dict] = []
         self.hangups: list[dict] = []
         self.voice_contexts: dict[str, dict] = {}
+        self.voice_snapshots: dict[str, dict] = {}
 
     async def get_voice_context(self, instance_id: str) -> dict:
         return self.voice_contexts.get(instance_id, {})
+
+    async def get_voice_snapshot(self, instance_id: str) -> dict:
+        if instance_id in self.voice_snapshots:
+            return self.voice_snapshots[instance_id]
+        context = self.voice_contexts.get(instance_id) or {}
+        products = []
+        menu = context.get("menu") or {}
+        if isinstance(menu, dict):
+            for slug, category in menu.items():
+                if not isinstance(category, dict):
+                    continue
+                for item in category.get("produits") or []:
+                    if isinstance(item, dict) and item.get("nom"):
+                        products.append({"nom": item["nom"], "categorie": slug})
+        return {
+            "availability": context.get("availability", True),
+            "restaurantOuvert": context.get("availability", True),
+            "products": products,
+        }
 
     async def check_availability(self, date: str, tenant_id: str | None = None) -> dict:
         self.availability_calls.append(date)
