@@ -136,3 +136,15 @@ def test_restaurant_context_includes_clock():
     assert "20/09/2026" in text
     assert "21:00" in text
     assert "Europe/Paris" in text
+
+
+def test_restaurant_ouvert_means_open_now_not_requested_slot():
+    text = build_restaurant_context(
+        {
+            "restaurantInfo": {"nom": "Chez Test"},
+            "menu": {"c": {"nom": "C", "produits": [{"nom": "Burger"}]}},
+            "availability": False,
+        }
+    )
+    assert "ouvert maintenant" in text
+    assert "heure demandee" in text
