@@ -272,3 +272,33 @@ async def test_fail_soft_when_context_missing():
     assert CONTEXT_UNAVAILABLE_GREETING in session._history[1]["content"]
     assert "indisponibles" in session._history[0]["content"]
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_native_runtime_records_realtime_latency_boundaries():
+    class StreamingLLM:
+        async def complete_stream(self, _messages, _tools):
+            yield LLMResult(content="Pour quelle date ?")
+
+        async def complete(self, _messages, _tools):
+            return LLMResult(content="Pour quelle date ?")
+
+    runtime = _runtime(llm=StreamingLLM(), stt=FakeSTT("Je veux une table."))
+    session = CallSession(FakeWebSocket(), runtime)
+    await session.handle_raw('{"event":"start","start":{"streamSid":"MZ1"}}')
+    await session._turn_task
+    await session.handle_raw(_media_msg())
+    await session.handle_raw(_media_msg())
+    await session._turn_task
+
+    latencies = runtime.telemetry.snapshot()["latency_ms"]
+    for stage in (
+        "audio_in_to_stt_start",
+        "llm_ttft",
+        "tts_ttfa_excluding_load",
+        "end_turn_to_first_audio",
+    ):
+        assert latencies[stage]["count"] >= 1
+        assert "p50" in latencies[stage]
+        assert "p95" in latencies[stage]
+    await session.close()

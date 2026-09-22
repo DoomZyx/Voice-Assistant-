@@ -97,3 +97,14 @@ def test_map_phone_error():
         NodeApiError("bad", 400, {"error": "Numéro de téléphone invalide ou manquant."})
     )
     assert mapped["error"] == "NUMERO_MANQUANT"
+
+
+def test_map_network_error_is_conversational_not_a_crash():
+    """Une panne reseau Fastify (NodeApiError taggee network_error) doit devenir
+    un code conversationnel, pas remonter comme une exception httpx brute."""
+    mapped = map_create_error(
+        NodeApiError("Fastify injoignable (ConnectTimeout)", None, {"network_error": True})
+    )
+    assert mapped["success"] is False
+    assert mapped["error"] == "SERVICE_INDISPONIBLE"
+    assert "ConnectTimeout" not in mapped["message"]

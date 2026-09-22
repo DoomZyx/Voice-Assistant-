@@ -5,6 +5,15 @@
 > L'audit mesure, la carte KEEP/REPLACE et la procedure Twilio sont dans
 > `voice-server/docs/VOICE_AUDIT.md`. Les sections 5.5, 9, 18 et 19 ci-dessous
 > decrivent encore partiellement l'etat avant ce refresh.
+>
+> Correction 2026-09-22 (audit de securite) : ce document sous-estimait l'etat
+> reel du code sur 3 points, corriges plus bas — le streaming LLM/TTS est deja
+> actif par defaut (section "Non-objectifs actuels"), `/v1/tools/*` exige une
+> cle interne en temps constant, et `/media-stream` verifie un token HMAC signe
+> avant d'accepter un appel (section "Risques actuels a traiter avant
+> exposition publique"). Par ailleurs, pipecat (orchestrateur candidat) a ete
+> evalue puis retire du code : `livekit_agent/` est le pipeline de production,
+> `app/session/*` (natif, decrit ici) reste en place en parallele.
 
 ## 1. Objet et statut du document
 
@@ -56,7 +65,10 @@ La distinction suivante est essentielle pour maintenir la fonctionnalité :
 - Le Voice Server n'accède jamais directement à MongoDB.
 - Le LLM n'exécute jamais de requête arbitraire ni de code applicatif.
 - Le Voice Server ne calcule ni prix, ni capacité, ni droits métier.
-- Le pipeline Python ne fait pas encore de streaming STT, LLM ou TTS.
+- Le LLM et le TTS streament par defaut (`llm_stream`/`tts_stream`, voir
+  `app/config.py`) ; le STT reste en mode "utterance complete" (V1 du
+  `STTEngine`), un mode partiels/streaming est documente comme V2 future mais
+  non implemente.
 - Le runtime Python ne persiste ni conversation, ni métrique, ni session.
 - La fin d'un appel local ne déclenche pas l'extraction post-appel historique.
 
@@ -1214,12 +1226,21 @@ Le nettoyage de session est effectué même sans événement Twilio `stop`.
 
 1. Les routes `/incoming-call` ne vérifient pas actuellement
    `X-Twilio-Signature`.
-2. Les WebSockets `/media-stream` acceptent toute connexion ; la configuration
-   Fastify utilise explicitement `verifyClient: callback(true)`.
+2. RESOLU (2026-09-22) : `/media-stream` exige desormais un token HMAC-SHA256
+   signe (tenant + expiration) porte par les `customParameters` Twilio,
+   verifie en temps constant (`hmac.compare_digest`) dans
+   `app/session/bootstrap.py` via `app/stream_token.py`. Une signature absente,
+   invalide ou expiree fait echouer la connexion (fail-closed, secret vide
+   inclus). La configuration Fastify `verifyClient: callback(true)` n'effectue
+   donc plus un accept-all cote securite applicative : le filtrage reel est
+   dans la verification du token, pas dans le WebSocket handshake.
 3. Les routes Fastify `/api/*/ai/*` ne possèdent pas de middleware interne
    dédié dans leur déclaration actuelle. Le header envoyé par Python ne suffit
    pas s'il n'est pas contrôlé.
-4. Les endpoints FastAPI `/v1/tools/*` ne demandent aucune authentification.
+4. RESOLU (2026-09-22) : les endpoints FastAPI `/v1/tools/*` exigent desormais
+   l'en-tete `x-api-key`, compare a `NODE_API_KEY` en temps constant
+   (`secrets.compare_digest`) via `require_internal_api_key` dans
+   `app/main.py`. Une cle absente, vide ou invalide renvoie HTTP 401.
 5. Le port 8090 ne doit donc jamais être publié directement sur Internet.
 6. Le buffer d'une phrase n'a pas de durée maximale ; une parole sans fin peut
    consommer de la mémoire.

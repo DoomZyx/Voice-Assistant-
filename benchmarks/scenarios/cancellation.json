@@ -1,0 +1,6 @@
+{
+  "id": "cancellation_without_session_reservation",
+  "turns": ["Je voudrais annuler ma reservation de ce soir."],
+  "expected_native": "refus explicite, aucun outil arbitraire",
+  "expected_livekit_reservations": "RESERVATION_ID_DENIED si la reservation n'a pas ete creee pendant cet appel"
+}

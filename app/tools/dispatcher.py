@@ -136,6 +136,15 @@ class ToolDispatcher:
 
 def map_create_error(exc: NodeApiError) -> dict[str, Any]:
     payload = exc.payload if isinstance(exc.payload, dict) else {}
+    if payload.get("network_error"):
+        return {
+            "success": False,
+            "error": "SERVICE_INDISPONIBLE",
+            "message": (
+                "Le service technique est temporairement injoignable. "
+                "Propose de rappeler plus tard, sans detail technique."
+            ),
+        }
     message = str(payload.get("error") or payload.get("message") or exc).lower()
 
     if "téléphone" in message or "telephone" in message or "phone" in message:

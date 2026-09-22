@@ -12,17 +12,16 @@ from livekit_agent.runtime import start_voice_session
 logger = logging.getLogger("mysmartfood-voice.livekit")
 
 
+async def restaurant_voice(ctx) -> None:
+    await start_voice_session(ctx, get_settings())
+
+
 def build_server(settings=None):
-    from livekit import agents
     from livekit.agents import AgentServer
 
     resolved = settings or get_settings()
     server = AgentServer()
-
-    @server.rtc_session(agent_name=resolved.agent_name)
-    async def restaurant_voice(ctx: agents.JobContext) -> None:
-        await start_voice_session(ctx, resolved)
-
+    server.rtc_session(agent_name=resolved.agent_name)(restaurant_voice)
     return server
 
 
@@ -30,8 +29,10 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     settings = get_settings()
     report = phase4_readiness(settings)
-    if settings.voice_tools_enabled:
-        logger.warning("step=phase4.skipped tools=true blockers=%s", ",".join(report.blockers) or "-")
+    if settings.voice_tools_enabled and report.blockers:
+        logger.warning("step=phase4.skipped tools=true blockers=%s", ",".join(report.blockers))
+    elif settings.voice_tools_enabled:
+        logger.info("step=tools.profile profile=%s", (settings.voice_tools_profile or "").strip() or "-")
     if worker_exit_code(settings):
         logger.error(
             "step=worker.config_missing missing=%s",
@@ -52,6 +53,8 @@ def main() -> None:
 
     from livekit.agents import cli
 
+    if len(sys.argv) == 1:
+        sys.argv.append("start")
     cli.run_app(build_server(settings))
 
 

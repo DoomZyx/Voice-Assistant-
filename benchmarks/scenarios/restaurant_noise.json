@@ -1,0 +1,7 @@
+{
+  "id": "restaurant_noise",
+  "audio_fixture": "benchmarks/audio/menus_tacos__street.wav",
+  "reference_id": "menus_tacos",
+  "expected": "hypothese non vide et sans hallucination de sous-titres",
+  "metric": "WER final et taux d'hypotheses vides"
+}

@@ -1,0 +1,8 @@
+{
+  "hardware": "cpu",
+  "gpu": null,
+  "notes": "Mesures locales CPU uniquement. vLLM et GPU L4 non mesures ici.",
+  "vad_load_and_infer_ms": 107,
+  "tts_ttfa_proxy_ms": 3859,
+  "tts_samples": 11435
+}

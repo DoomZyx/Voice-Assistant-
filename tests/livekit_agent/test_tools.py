@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from livekit_agent.config import LiveKitSettings
-from livekit_agent.tools.dispatcher import ToolDispatcher
+from livekit_agent.tools.dispatcher import ToolDispatcher, session_tool_arguments
 from livekit_agent.tools.http import FastifyToolsClient
 
 
@@ -169,14 +169,29 @@ async def test_create_order_rejects_unknown_product():
 
 
 @pytest.mark.asyncio
-async def test_unknown_and_reservation_stubs():
+async def test_unknown_tool_is_rejected():
     dispatcher = ToolDispatcher(_client(), tenant_id="tenant-1")
     unknown = await dispatcher.dispatch("drop_database", {})
     assert unknown["success"] is False
-    reservation = await dispatcher.dispatch("create_reservation", {"date": "2026-09-20"})
-    assert reservation["success"] is False
-    assert reservation["error"] == "NOT_IMPLEMENTED"
     await dispatcher.aclose()
+
+
+def test_session_tool_arguments_strip_nested_tenant_selectors():
+    cleaned = session_tool_arguments(
+        {
+            "name": "Ada",
+            "restaurant_id": "tenant-b",
+            "tenantId": "tenant-b",
+            "instanceId": "tenant-b",
+            "schema": "tenant_b",
+            "commandes": [
+                {"nom": "Burger", "restaurant_id": "tenant-b", "instance_id": "tenant-b"},
+            ],
+        }
+    )
+    assert cleaned == {"name": "Ada", "commandes": [{"nom": "Burger"}]}
+    assert "restaurant_id" not in cleaned
+    assert "tenantId" not in cleaned
 
 
 @pytest.mark.asyncio

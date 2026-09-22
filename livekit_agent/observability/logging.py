@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app.observability import sanitize_log_fields
+
 logger = logging.getLogger("mysmartfood-voice.livekit")
 
 
@@ -30,7 +32,7 @@ def emit_event(
         parts.append(f"provider={provider}")
     if model:
         parts.append(f"model={model}")
-    for key, value in fields.items():
+    for key, value in sanitize_log_fields(fields).items():
         if value is None:
             continue
         parts.append(f"{key}={value}")

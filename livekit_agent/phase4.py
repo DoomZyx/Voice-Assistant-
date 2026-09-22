@@ -36,6 +36,9 @@ def worker_exit_code(settings: LiveKitSettings) -> int:
 def phase4_readiness(settings: LiveKitSettings) -> Phase4Report:
     missing = missing_runtime_settings(settings)
     blockers: list[str] = []
-    if settings.voice_tools_enabled:
-        blockers.append("VOICE_TOOLS_ENABLED=true : les tools Fastify sont hors scope Phase 4")
+    profile = (settings.voice_tools_profile or "").strip().lower()
+    if settings.voice_tools_enabled and profile != "reservations":
+        blockers.append(
+            "VOICE_TOOLS_ENABLED=true : tools autorises seulement avec VOICE_TOOLS_PROFILE=reservations"
+        )
     return Phase4Report(ready=not missing and not blockers, missing=missing, blockers=blockers)

@@ -1,0 +1,5 @@
+{
+  "id": "party_size_correction",
+  "turns": ["Nous serons quatre.", "Ah non, six."],
+  "expected_party_size": 6
+}

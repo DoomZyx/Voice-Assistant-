@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from starlette.websockets import WebSocketDisconnect
 
 from app.audio.buffer import AudioBuffer
 from app.audio.chunking import flush_speech_chunks
@@ -23,7 +24,8 @@ from app.audio.preprocess import apply_preprocess
 from app.audio.resample import resample_pcm16
 from app.llm import LLMResult
 from app.llm.tools import LLM_TOOLS
-from app.observability import emit_event
+from app.node_client import NodeApiError
+from app.observability import emit_event, sanitize_log_fields
 from app.prompts import build_agent_instructions
 from app.session.bootstrap import (
     apply_forced_caller_number,
@@ -80,6 +82,8 @@ class CallSession:
         self._incomplete_task: asyncio.Task | None = None
         self._barge_gate = BargeInConfirmer()
         self._epoch = PlaybackEpoch()
+        self._speech_started_at: float | None = None
+        self._turn_ended_at: float | None = None
 
     @property
     def closed(self) -> bool:
@@ -98,7 +102,7 @@ class CallSession:
 
     def _log(self, step: str, **fields: Any) -> None:
         parts = [f"step={step}", f"stream={self.stream_sid}", f"call={self.call_sid}"]
-        for key, value in fields.items():
+        for key, value in sanitize_log_fields(fields).items():
             if value is None:
                 continue
             parts.append(f"{key}={value}")
@@ -155,8 +159,17 @@ class CallSession:
                 await task
             except asyncio.CancelledError:
                 pass
-            except Exception:
-                logger.error("step=session.task_error stream=%s", self.stream_sid)
+            except Exception as exc:
+                # Dernier recours volontaire : le turn task a deja son propre
+                # except Exception (voir _run_turn) qui avale et repond un
+                # fallback vocal ; s'il leve quand meme (ex: le fallback lui-
+                # meme echoue), la fermeture de session ne doit jamais planter.
+                logger.error(
+                    "step=session.task_error stream=%s error=%s",
+                    self.stream_sid,
+                    exc,
+                    exc_info=True,
+                )
         hangup_payload = self._build_hangup_payload()
         buffered = len(self._utterance) + len(self._pre_roll)
         self._utterance.clear()
@@ -242,6 +255,12 @@ class CallSession:
         try:
             result = self._vad.process(pcm)
         except Exception:
+            # VADEngine (app/vad) est un Protocol interchangeable : le type
+            # d'exception concret depend du backend (ex: erreurs onnxruntime
+            # pour Silero, qui ne partagent pas de base commune avec autre
+            # chose qu'Exception). On tague puis on repropage tel quel ; le
+            # traceback complet est logue plus haut par l'appelant
+            # (main.py:_run_native_media_stream logue avec logger.exception).
             self.last_error = "vad_failed"
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_error("vad")
@@ -250,6 +269,7 @@ class CallSession:
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_latency("vad", _ms(vad_started))
         if result.speech_started:
+            self._speech_started_at = time.perf_counter()
             self._log("vad.speech_started", probability=round(result.probability, 3))
             emit_event(
                 "speech_start",
@@ -280,6 +300,7 @@ class CallSession:
         if result.speech_ended:
             self._barge_gate.reset()
             utterance = self._utterance.flush()
+            self._turn_ended_at = time.perf_counter()
             duration_ms = int(1000 * utterance.size / max(self._runtime.settings.twilio_sample_rate, 1))
             self._log("vad.speech_ended", samples=utterance.size, duration_ms=duration_ms)
             emit_event(
@@ -364,12 +385,25 @@ class CallSession:
             except asyncio.CancelledError:
                 self._log("turn.cancelled")
                 raise
-            except Exception:
+            except Exception as exc:
+                # Dernier recours volontaire et assume : STT/LLM/TTS/outils
+                # sont des moteurs interchangeables (Protocol) dont les types
+                # d'exception concrets varient par backend ; ce tour ne doit
+                # jamais planter la session, donc on avale et on repond un
+                # fallback vocal. On logge le type/traceback ici (seul point
+                # ou l'exception est visible) pour ne pas perdre le diagnostic
+                # reseau/timeout/bug que le fallback masquerait sinon.
                 if self.last_error == previous_error:
                     self.last_error = "turn_failed"
                     if self._runtime.telemetry:
                         self._runtime.telemetry.record_error("turn")
-                logger.error("step=turn.error stream=%s call=%s", self.stream_sid, self.call_sid)
+                logger.error(
+                    "step=turn.error stream=%s call=%s error=%s",
+                    self.stream_sid,
+                    self.call_sid,
+                    exc,
+                    exc_info=True,
+                )
                 if not self._cancel.is_set() and not self._closed:
                     await self._speak(FALLBACK_REPLY)
 
@@ -416,6 +450,7 @@ class CallSession:
             provider=self._runtime.active_llm_provider,
             model=self._runtime.settings.vllm_model,
         )
+        llm_started = time.perf_counter()
         first_token_logged = False
         async for delta in stream(self._history, tools):
             if self._cancel.is_set() or self._closed:
@@ -427,10 +462,14 @@ class CallSession:
                 continue
             if not first_token_logged:
                 first_token_logged = True
+                ttft_ms = _ms(llm_started)
+                if self._runtime.telemetry:
+                    self._runtime.telemetry.record_latency("llm_ttft", ttft_ms)
                 emit_event(
                     "llm_first_token",
                     call_id=self.call_sid,
                     session_id=self.stream_sid,
+                    latency_ms=ttft_ms,
                     provider=self._runtime.active_llm_provider,
                 )
             buffer += delta.content
@@ -472,6 +511,16 @@ class CallSession:
         )
         self.stage = "stt"
         self._log("stt.start", samples_8k=prepared.size, samples_16k=pcm16k.size)
+        if self._speech_started_at is not None and self._runtime.telemetry:
+            audio_to_stt_ms = _ms(self._speech_started_at)
+            self._runtime.telemetry.record_latency("audio_in_to_stt_start", audio_to_stt_ms)
+            emit_event(
+                "audio_in_to_stt_start",
+                call_id=self.call_sid,
+                session_id=self.stream_sid,
+                latency_ms=audio_to_stt_ms,
+            )
+            self._speech_started_at = None
         emit_event(
             "stt_start",
             call_id=self.call_sid,
@@ -492,6 +541,10 @@ class CallSession:
             )
             return text
         except Exception:
+            # STTEngine est un Protocol interchangeable (faster-whisper,
+            # parakeet/NeMo...) ; on tague puis repropage sans filtrer le
+            # type, le traceback est logue au niveau orchestrateur du tour
+            # (_run_turn) qui est le seul point qui avale l'exception.
             self.last_error = "stt_failed"
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_error("stt")
@@ -576,6 +629,11 @@ class CallSession:
             self._log("llm.max_rounds", rounds=rounds)
             return FALLBACK_REPLY
         except Exception:
+            # LLMProvider est un Protocol interchangeable (vLLM/OpenAI) et
+            # cette boucle appelle aussi le dispatcher d'outils Fastify (deja
+            # convertis en NodeApiError -> dict conversationnel, donc pas
+            # d'exception attendue de ce cote). On tague puis repropage ; le
+            # traceback est logue au niveau orchestrateur du tour (_run_turn).
             self.last_error = "llm_failed"
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_error("llm")
@@ -616,6 +674,11 @@ class CallSession:
                 provider=self._runtime.tts_provider,
             )
         except Exception:
+            # TTSEngine est un Protocol interchangeable (Kokoro aujourd'hui) ;
+            # on tague puis repropage sans filtrer le type, le traceback est
+            # logue au niveau orchestrateur du tour (_run_turn) ou par le
+            # WebSocket handler si l'appel vient de _speak(greeting) hors tour
+            # (voir main.py:_run_native_media_stream, logger.exception).
             self.last_error = "tts_failed"
             if self._runtime.telemetry:
                 self._runtime.telemetry.record_error("tts")
@@ -661,18 +724,36 @@ class CallSession:
             self._media_out += 1
             if not first_audio:
                 first_audio = True
+                ttfa_ms = _ms(started)
+                if self._runtime.telemetry:
+                    # Le moteur est construit avant l'appel : cette mesure ne
+                    # comprend ni le chargement ni le telechargement du modele.
+                    self._runtime.telemetry.record_latency("tts_ttfa_excluding_load", ttfa_ms)
                 emit_event(
                     "tts_first_audio",
                     call_id=self.call_sid,
                     session_id=self.stream_sid,
-                    latency_ms=_ms(started),
+                    latency_ms=ttfa_ms,
                     provider=self._runtime.tts_provider,
                 )
+                if self._turn_ended_at is not None:
+                    end_to_audio_ms = _ms(self._turn_ended_at)
+                    if self._runtime.telemetry:
+                        self._runtime.telemetry.record_latency(
+                            "end_turn_to_first_audio", end_to_audio_ms
+                        )
+                    emit_event(
+                        "end_turn_to_first_audio",
+                        call_id=self.call_sid,
+                        session_id=self.stream_sid,
+                        latency_ms=end_to_audio_ms,
+                    )
+                    self._turn_ended_at = None
                 emit_event(
                     "twilio_first_audio_sent",
                     call_id=self.call_sid,
                     session_id=self.stream_sid,
-                    latency_ms=_ms(started),
+                    latency_ms=ttfa_ms,
                 )
             next_frame_at += OUTBOUND_FRAME_SECONDS
         self._log("tts.done", ms=_ms(started), samples=pcm8k.size, frames=frames_sent)
@@ -699,7 +780,11 @@ class CallSession:
                     "latencyMs": int(latency_ms or 0),
                 }
             )
-        except Exception as exc:
+        except NodeApiError as exc:
+            # Le reporting d'usage ne doit jamais casser le tour en cours ;
+            # NodeApiClient convertit deja les pannes reseau/timeout httpx en
+            # NodeApiError (voir app/node_client.py), donc c'est le seul type
+            # attendu ici.
             logger.warning("step=llm.usage_report_failed error=%s", str(exc)[:200])
 
     def _remember_live_create(self, name: str, tool_result: dict[str, Any]) -> None:
@@ -744,7 +829,10 @@ class CallSession:
                 live_create=bool(payload.get("liveCreate")),
                 created_type=(payload.get("liveCreate") or {}).get("type"),
             )
-        except Exception as exc:
+        except NodeApiError as exc:
+            # Meme raisonnement que _report_usage : NodeApiClient convertit
+            # deja reseau/timeout en NodeApiError, la fermeture de session ne
+            # doit pas echouer si Fastify est injoignable au hangup.
             logger.warning("step=hangup.failed error=%s", str(exc)[:200])
 
     async def _send_text(self, message: str) -> None:
@@ -756,7 +844,10 @@ class CallSession:
                 return
             try:
                 await websocket.send_text(message)
-            except Exception as exc:
+            except (RuntimeError, WebSocketDisconnect) as exc:
+                # Seuls types que Starlette leve depuis WebSocket.send() : un
+                # OSError reseau est deja converti en WebSocketDisconnect en
+                # interne, et RuntimeError couvre un envoi apres fermeture.
                 self._log("twilio.send_error", error=str(exc)[:200])
 
 
@@ -766,5 +857,3 @@ def _b64(frame: bytes) -> str:
 
 def _ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
-
-

@@ -60,6 +60,7 @@ class LiveKitSettings(BaseSettings):
     restaurant_name: str = ""
     sip_did_tenant_map: str = ""
     voice_tools_enabled: bool = False
+    voice_tools_profile: str = ""
     greeting_text: str = "Bonjour, je vous ecoute."
     cache_dir: str = ""
 

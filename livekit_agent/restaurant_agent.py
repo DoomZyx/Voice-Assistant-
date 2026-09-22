@@ -9,10 +9,15 @@ def build_restaurant_agent(
     instructions: str,
     greeting: str,
     dispatcher: ToolDispatcher | None = None,
+    tools_profile: str = "",
 ):
     from livekit.agents import Agent
 
-    tools = build_livekit_tools(dispatcher) if dispatcher is not None else []
+    tools = (
+        build_livekit_tools(dispatcher, profile=tools_profile)
+        if dispatcher is not None
+        else []
+    )
 
     class RestaurantAgent(Agent):
         def __init__(self) -> None:

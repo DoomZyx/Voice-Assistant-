@@ -1,0 +1,84 @@
+{
+  "date": "2026-09-19",
+  "goal": "Measure Qwen2.5-Omni-7B GPTQ-Int4 audio->audio on L4 before any Twilio refactor",
+  "status": "not_measured",
+  "error": null,
+  "audit": {
+    "model": "Qwen/Qwen2.5-Omni-7B-GPTQ-Int4",
+    "target_gpu": "NVIDIA L4 24GB",
+    "sources": [
+      "https://huggingface.co/Qwen/Qwen2.5-Omni-7B-GPTQ-Int4",
+      "https://github.com/QwenLM/Qwen2.5-Omni",
+      "https://huggingface.co/docs/transformers/en/model_doc/qwen2_5_omni"
+    ],
+    "vram": {
+      "official_int4_15s_video_gb": 11.64,
+      "official_int4_30s_video_gb": 17.43,
+      "official_int4_60s_video_gb": 29.51,
+      "bf16_7b_15s_video_gb": 31.11,
+      "l4_fits_int4_15s_video": true,
+      "l4_fits_int4_30s_video": true,
+      "l4_fits_int4_60s_video": false,
+      "l4_fits_bf16_7b": false,
+      "audio_only_note": "Official numbers are video. Audio-only turns must stay short. Keep thinker.visual on CPU. Do not keep 60s of audio context.",
+      "cpu_offload_note": "Official INT4 demo offloads visual and audio_tower to CPU. That saves VRAM and adds latency. Phone S2S should keep audio_tower on CUDA.",
+      "measured_peak_gb": null
+    },
+    "streaming": {
+      "architecture": "Thinker-Talker plus sliding-window DiT",
+      "transformers_generate": "Returns the full 24 kHz waveform when generate() finishes. Not a Twilio 20 ms frame iterator.",
+      "official_int4_token2wav": "Internal streaming exists to avoid pre-allocating VRAM. The Python API still waits for the complete audio.",
+      "vllm_openai_current_stack": "vllm/vllm-openai:v0.10.2 serves thinker text only. No talker, no S2S.",
+      "vllm_omni": "Separate project. Text can stream. Audio is returned at the end of the stage.",
+      "dashscope_cloud": "True audio streaming exists in the cloud API. That is not the L4 target.",
+      "measured_s2s_total_ms": null
+    },
+    "function_calling": {
+      "local_generate": "No first-class tools argument on official generate().",
+      "thinker_path": "Thinker is Qwen2.5. A prompt-level tool loop with return_audio=False is the only local path that can call Fastify.",
+      "s2s_risk": "If tools stay on the speech path, Talker may read tool JSON aloud.",
+      "cloud_dashscope": "Function calling is documented on the hosted Omni API only.",
+      "measured": null
+    },
+    "french": {
+      "asr_common_voice_15_fr_wer_official": 7.5,
+      "tts_official_eval": "Seed-TTS zh/en, not French telephone.",
+      "voices": [
+        "Chelsie",
+        "Ethan"
+      ],
+      "system_prompt_constraint": "Audio output requires the official Qwen system prompt. Restaurant style must be primed as a user/assistant turn.",
+      "measured": null
+    },
+    "cannot_cohabit_with": [
+      "faster-whisper",
+      "vLLM Qwen2.5-3B-Instruct",
+      "Kokoro",
+      "Smart Turn as a second orchestrator"
+    ]
+  },
+  "run": {
+    "status": "not_measured",
+    "reason": "dry-run on a host without loading weights",
+    "hardware": {
+      "available": false,
+      "reason": "torch absent"
+    }
+  },
+  "integration_allowed": false,
+  "french_quality": null,
+  "tool_call_success": null,
+  "model_load_vram": null,
+  "peak_vram": null,
+  "total_latency_ms": null,
+  "thinker_latency_ms": null,
+  "talker_latency_ms": null,
+  "output_audio_ok": null,
+  "notes": [
+    "Twilio stays disconnected until a measured L4 run exists."
+  ],
+  "go_nogo": {
+    "integration_allowed": false,
+    "reason": "not measured"
+  }
+}

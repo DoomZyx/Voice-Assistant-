@@ -15,7 +15,7 @@ def test_available_providers_lists_known_families():
     assert "silero" in catalog["vad"]
     assert "heuristic" in catalog["turn"]
     assert "smart_turn" in catalog["turn"]
-    assert "pipecat" in catalog["orchestrator"]
+    assert "native" in catalog["orchestrator"]
 
 
 def test_build_engines_keeps_injected_fakes():

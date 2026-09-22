@@ -1,0 +1,50 @@
+{
+  "hardware": "control-plane",
+  "default_confirm_ms": 160,
+  "default_is_optimum": false,
+  "reason": "160 est dans la bande 120-200 demandee. Il coupe le burst 50 ms et garde une parole continue 200 ms. Le bruit soutenu 250 ms reste une interruption si le VAD le classe parole.",
+  "rows": [
+    {
+      "confirm_ms": 50,
+      "burst_50ms_interrupts": true,
+      "speech_200ms_interrupts": true,
+      "sustained_noise_250ms_interrupts": true
+    },
+    {
+      "confirm_ms": 80,
+      "burst_50ms_interrupts": false,
+      "speech_200ms_interrupts": true,
+      "sustained_noise_250ms_interrupts": true
+    },
+    {
+      "confirm_ms": 120,
+      "burst_50ms_interrupts": false,
+      "speech_200ms_interrupts": true,
+      "sustained_noise_250ms_interrupts": true
+    },
+    {
+      "confirm_ms": 160,
+      "burst_50ms_interrupts": false,
+      "speech_200ms_interrupts": true,
+      "sustained_noise_250ms_interrupts": true
+    },
+    {
+      "confirm_ms": 200,
+      "burst_50ms_interrupts": false,
+      "speech_200ms_interrupts": true,
+      "sustained_noise_250ms_interrupts": true
+    },
+    {
+      "confirm_ms": 250,
+      "burst_50ms_interrupts": false,
+      "speech_200ms_interrupts": false,
+      "sustained_noise_250ms_interrupts": true
+    }
+  ],
+  "chosen": {
+    "confirm_ms": 160,
+    "burst_50ms_interrupts": false,
+    "speech_200ms_interrupts": true,
+    "sustained_noise_250ms_interrupts": true
+  }
+}

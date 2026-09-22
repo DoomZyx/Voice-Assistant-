@@ -44,6 +44,13 @@ class FastifyToolsClient:
         if self._owns:
             await self._client.aclose()
 
+    async def get_inbound_tenant(self, phone: str) -> dict[str, Any]:
+        response = await self._client.get(
+            "/api/voice/inbound-tenant",
+            params={"phone": phone},
+        )
+        return self._require_data(response, "tenant inbound")
+
     async def get_voice_context(self, tenant_id: str) -> dict[str, Any]:
         safe_id = quote(tenant_id, safe="")
         response = await self._client.get(
@@ -68,7 +75,7 @@ class FastifyToolsClient:
             "time": payload.get("time") or payload.get("heure"),
             "type": "Commande à emporter",
             "description": payload.get("description") or "",
-            "commandes": payload.get("commandes") or [],
+            "commandes": _public_order_lines(payload.get("commandes") or []),
         }
         response = await self._client.post(
             "/api/orders/ai/create",
@@ -96,6 +103,112 @@ class FastifyToolsClient:
         )
         return self._parse_write(response, "order")
 
+    async def check_table_availability(
+        self,
+        tenant_id: str,
+        date: str,
+        heure: str,
+        duree: int = 60,
+    ) -> dict[str, Any]:
+        response = await self._client.get(
+            "/api/reservations/availability",
+            params={"date": date, "heure": heure, "duree": duree},
+            headers=self._tenant_headers(tenant_id),
+        )
+        return self._require_success_object(response, "disponibilite table")
+
+    async def get_available_slots(self, tenant_id: str, date: str) -> dict[str, Any]:
+        response = await self._client.get(
+            "/api/reservations/ai/available-slots",
+            params={"date": date},
+            headers=self._tenant_headers(tenant_id),
+        )
+        return self._require_success_object(response, "creneaux reservation")
+
+    async def list_reservations(self, tenant_id: str, date: str | None = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {}
+        if date:
+            params["date"] = date
+        response = await self._client.get(
+            "/api/reservations",
+            params=params,
+            headers=self._tenant_headers(tenant_id),
+        )
+        if response.status_code in {403, 404}:
+            return []
+        payload = self._require_success_object(response, "liste reservations")
+        rows = payload.get("data")
+        return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+    async def create_reservation(self, payload: dict[str, Any], tenant_id: str) -> dict[str, Any]:
+        covers = payload.get("nombrePersonnes")
+        if covers is None:
+            covers = payload.get("couverts") or 1
+        body = {
+            "telephone": payload.get("telephone") or payload.get("phone"),
+            "date": payload.get("date"),
+            "time": payload.get("time") or payload.get("heure"),
+            "name": payload.get("name") or payload.get("nom") or "Client",
+            "description": payload.get("description") or "",
+            "nombrePersonnes": covers,
+        }
+        response = await self._client.post(
+            "/api/reservations/ai/create",
+            json=body,
+            headers=self._tenant_headers(tenant_id),
+        )
+        return self._parse_write(response, "reservation")
+
+    async def update_reservation(
+        self,
+        reservation_id: str,
+        payload: dict[str, Any],
+        tenant_id: str,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {}
+        if payload.get("date"):
+            body["date"] = payload["date"]
+        heure = payload.get("heure") or payload.get("time")
+        if heure:
+            body["heure"] = heure
+        if payload.get("nom") or payload.get("name"):
+            body["nom"] = payload.get("nom") or payload.get("name")
+        if payload.get("telephone"):
+            body["telephone"] = payload["telephone"]
+        if payload.get("description") is not None:
+            body["description"] = payload["description"]
+        covers = payload.get("nombrePersonnes")
+        if covers is None:
+            covers = payload.get("couverts")
+        if covers is not None:
+            body["nombrePersonnes"] = covers
+        response = await self._client.put(
+            f"/api/reservations/{quote(reservation_id, safe='')}",
+            json=body,
+            headers=self._tenant_headers(tenant_id),
+        )
+        return self._parse_write(response, "reservation")
+
+    async def cancel_reservation(self, reservation_id: str, tenant_id: str) -> dict[str, Any]:
+        response = await self._client.patch(
+            f"/api/reservations/{quote(reservation_id, safe='')}/status",
+            json={"statut": "annule"},
+            headers=self._tenant_headers(tenant_id),
+        )
+        return self._parse_write(response, "reservation")
+
+    def _require_success_object(self, response: httpx.Response, context: str) -> dict[str, Any]:
+        payload = _safe_json(response)
+        if response.status_code >= 400:
+            raise FastifyApiError(
+                _error_message(payload, f"{context}: HTTP {response.status_code}"),
+                response.status_code,
+                payload,
+            )
+        if not isinstance(payload, dict):
+            raise FastifyApiError(f"{context} invalide", response.status_code, payload)
+        return payload
+
     def _require_data(self, response: httpx.Response, context: str) -> dict[str, Any]:
         payload = _safe_json(response)
         if response.status_code >= 400:
@@ -107,11 +220,8 @@ class FastifyToolsClient:
     def _parse_write(self, response: httpx.Response, kind: str) -> dict[str, Any]:
         payload = _safe_json(response)
         if response.status_code >= 400:
-            message = ""
-            if isinstance(payload, dict):
-                message = str(payload.get("error") or payload.get("message") or "")
             raise FastifyApiError(
-                message or f"Echec {kind}: HTTP {response.status_code}",
+                _error_message(payload, f"Echec {kind}: HTTP {response.status_code}"),
                 response.status_code,
                 payload,
             )
@@ -127,6 +237,29 @@ class FastifyToolsClient:
             "type": kind,
             "data": record if isinstance(record, dict) else payload,
         }
+
+
+def _public_order_lines(commandes: Any) -> list[dict[str, Any]]:
+    from livekit_agent.tools.dispatcher import _strip_session_keys
+
+    if not isinstance(commandes, list):
+        return []
+    cleaned: list[dict[str, Any]] = []
+    for line in commandes:
+        if not isinstance(line, dict):
+            continue
+        item = _strip_session_keys(line)
+        if isinstance(item, dict):
+            cleaned.append(item)
+    return cleaned
+
+
+def _error_message(payload: Any, fallback: str) -> str:
+    if isinstance(payload, dict):
+        message = str(payload.get("error") or payload.get("message") or payload.get("details") or "")
+        if message.strip():
+            return message
+    return fallback
 
 
 def _safe_json(response: httpx.Response) -> Any:

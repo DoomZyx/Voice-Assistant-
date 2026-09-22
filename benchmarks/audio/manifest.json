@@ -1,0 +1,214 @@
+[
+  {
+    "id": "table_quatre_2030__clean",
+    "source_id": "table_quatre_2030",
+    "text": "Bonsoir, vous avez une table pour quatre vers vingt heures trente ?",
+    "tags": [
+      "reservation",
+      "numbers",
+      "time"
+    ],
+    "condition": "clean",
+    "path": "audio/table_quatre_2030__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "table_quatre_2030__street",
+    "source_id": "table_quatre_2030",
+    "text": "Bonsoir, vous avez une table pour quatre vers vingt heures trente ?",
+    "tags": [
+      "reservation",
+      "numbers",
+      "time"
+    ],
+    "condition": "street",
+    "path": "audio/table_quatre_2030__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "correction_six__clean",
+    "source_id": "correction_six",
+    "text": "Finalement on sera six.",
+    "tags": [
+      "correction",
+      "numbers"
+    ],
+    "condition": "clean",
+    "path": "audio/correction_six__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "correction_six__street",
+    "source_id": "correction_six",
+    "text": "Finalement on sera six.",
+    "tags": [
+      "correction",
+      "numbers"
+    ],
+    "condition": "street",
+    "path": "audio/correction_six__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "reserver_demain__clean",
+    "source_id": "reserver_demain",
+    "text": "Je voudrais reserver demain soir.",
+    "tags": [
+      "reservation",
+      "date"
+    ],
+    "condition": "clean",
+    "path": "audio/reserver_demain__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "reserver_demain__street",
+    "source_id": "reserver_demain",
+    "text": "Je voudrais reserver demain soir.",
+    "tags": [
+      "reservation",
+      "date"
+    ],
+    "condition": "street",
+    "path": "audio/reserver_demain__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "ouvert_dimanche__clean",
+    "source_id": "ouvert_dimanche",
+    "text": "Vous etes ouverts dimanche midi ?",
+    "tags": [
+      "hours"
+    ],
+    "condition": "clean",
+    "path": "audio/ouvert_dimanche__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "ouvert_dimanche__street",
+    "source_id": "ouvert_dimanche",
+    "text": "Vous etes ouverts dimanche midi ?",
+    "tags": [
+      "hours"
+    ],
+    "condition": "street",
+    "path": "audio/ouvert_dimanche__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "menus_tacos__clean",
+    "source_id": "menus_tacos",
+    "text": "Je voudrais deux menus tacos, un sans sauce.",
+    "tags": [
+      "order",
+      "food"
+    ],
+    "condition": "clean",
+    "path": "audio/menus_tacos__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "menus_tacos__street",
+    "source_id": "menus_tacos",
+    "text": "Je voudrais deux menus tacos, un sans sauce.",
+    "tags": [
+      "order",
+      "food"
+    ],
+    "condition": "street",
+    "path": "audio/menus_tacos__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "correction_heure__clean",
+    "source_id": "correction_heure",
+    "text": "Attendez, non, plutot vingt et une heures.",
+    "tags": [
+      "correction",
+      "time",
+      "hesitation"
+    ],
+    "condition": "clean",
+    "path": "audio/correction_heure__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "correction_heure__street",
+    "source_id": "correction_heure",
+    "text": "Attendez, non, plutot vingt et une heures.",
+    "tags": [
+      "correction",
+      "time",
+      "hesitation"
+    ],
+    "condition": "street",
+    "path": "audio/correction_heure__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "nom_schmitt__clean",
+    "source_id": "nom_schmitt",
+    "text": "C'est au nom de Schmitt.",
+    "tags": [
+      "name"
+    ],
+    "condition": "clean",
+    "path": "audio/nom_schmitt__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "nom_schmitt__street",
+    "source_id": "nom_schmitt",
+    "text": "C'est au nom de Schmitt.",
+    "tags": [
+      "name"
+    ],
+    "condition": "street",
+    "path": "audio/nom_schmitt__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "nom_nguyen__clean",
+    "source_id": "nom_nguyen",
+    "text": "C'est pour Monsieur Nguyen.",
+    "tags": [
+      "name"
+    ],
+    "condition": "clean",
+    "path": "audio/nom_nguyen__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "nom_nguyen__street",
+    "source_id": "nom_nguyen",
+    "text": "C'est pour Monsieur Nguyen.",
+    "tags": [
+      "name"
+    ],
+    "condition": "street",
+    "path": "audio/nom_nguyen__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "annuler_soir__clean",
+    "source_id": "annuler_soir",
+    "text": "Vous pouvez annuler la reservation de ce soir ?",
+    "tags": [
+      "cancel"
+    ],
+    "condition": "clean",
+    "path": "audio/annuler_soir__clean.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  },
+  {
+    "id": "annuler_soir__street",
+    "source_id": "annuler_soir",
+    "text": "Vous pouvez annuler la reservation de ce soir ?",
+    "tags": [
+      "cancel"
+    ],
+    "condition": "street",
+    "path": "audio/annuler_soir__street.wav",
+    "encoding": "pcm16-8k-after-mulaw"
+  }
+]

@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "encoding": "mulaw-8k",
+  "language": "fr",
+  "items": [
+    {
+      "id": "table_quatre_2030",
+      "text": "Bonsoir, vous avez une table pour quatre vers vingt heures trente ?",
+      "tags": ["reservation", "numbers", "time"]
+    },
+    {
+      "id": "correction_six",
+      "text": "Finalement on sera six.",
+      "tags": ["correction", "numbers"]
+    },
+    {
+      "id": "reserver_demain",
+      "text": "Je voudrais reserver demain soir.",
+      "tags": ["reservation", "date"]
+    },
+    {
+      "id": "ouvert_dimanche",
+      "text": "Vous etes ouverts dimanche midi ?",
+      "tags": ["hours"]
+    },
+    {
+      "id": "menus_tacos",
+      "text": "Je voudrais deux menus tacos, un sans sauce.",
+      "tags": ["order", "food"]
+    },
+    {
+      "id": "correction_heure",
+      "text": "Attendez, non, plutot vingt et une heures.",
+      "tags": ["correction", "time", "hesitation"]
+    },
+    {
+      "id": "nom_schmitt",
+      "text": "C'est au nom de Schmitt.",
+      "tags": ["name"]
+    },
+    {
+      "id": "nom_nguyen",
+      "text": "C'est pour Monsieur Nguyen.",
+      "tags": ["name"]
+    },
+    {
+      "id": "annuler_soir",
+      "text": "Vous pouvez annuler la reservation de ce soir ?",
+      "tags": ["cancel"]
+    }
+  ]
+}

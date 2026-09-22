@@ -18,9 +18,6 @@ voice = [
   "faster-whisper>=1.1",
   "kokoro-onnx>=0.4",
 ]
-pipecat = [
-  "pipecat-ai[whisper,silero,openai]>=0.0.95",
-]
 livekit = [
   "livekit-agents[openai,silero]>=1.2",
 ]

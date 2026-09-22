@@ -618,7 +618,34 @@ Le cut Kokoro 30/45 % de l'A/B n'est donc pas equivalent a un humain qui hesite.
 
 `nvidia-smi` absent sur cette machine. Aucun WER/latence GPU invente.
 Probe: `benchmarks/results/stt_l4_probe.json`.
-Ordre prevu: small CUDA, large-v3-turbo, Nemotron 3.5 streaming 0.6B, Parakeet TDT 0.6B v3.
-Metriques exigees: partial_first_ms, partial_stable_ms, final_ms, WER_final, WER_partial, RTF, GPU mem, GPU util.
+L'A/B STT GPU n'est plus la cible. Voir section 19.
 
-`VOICE_ORCHESTRATOR=native` inchange.
+`VOICE_ORCHESTRATOR=native` inchange jusqu'au GO Omni.
+
+---
+
+## 19. Pivot Qwen2.5-Omni INT4 S2S (2026-09-19)
+
+Cible produit: Twilio -> Qwen2.5-Omni-7B GPTQ-Int4 -> Twilio. Plus de Whisper, LLM texte, Kokoro, Smart Turn ni second orchestrateur sur le chemin principal.
+
+Audit papier (cartes officielles, pas une mesure L4):
+
+| Sujet | Verdict | Preuve |
+|---|---|---|
+| VRAM INT4 15 s video | 11.64 Go, L4 24 Go OK | [GPTQ-Int4](https://huggingface.co/Qwen/Qwen2.5-Omni-7B-GPTQ-Int4) |
+| VRAM INT4 30 s video | 17.43 Go, L4 OK avec marge | meme carte |
+| VRAM INT4 60 s video | 29.51 Go, L4 KO | meme carte |
+| BF16 7B | 31.11 Go / 15 s, L4 KO | README Qwen2.5-Omni |
+| Streaming local `generate()` | waveform 24 kHz complet en fin de tour | Transformers + demo officielle |
+| token2wav INT4 | stream interne anti-prealloc, pas d'API Twilio 20 ms | carte GPTQ |
+| vLLM actuel `v0.10.2` | thinker texte seulement, pas de talker | README Omni + compose Scaleway |
+| Function calling local | pas d'argument `tools` sur `generate()` | docs Transformers / README |
+| FR ASR | Common Voice 15 FR WER 7.5 (officiel 7B) | README Omni |
+| FR TTS | Seed-TTS zh/en seulement. Chelsie / Ethan. Inconnu au telephone FR | README Omni |
+
+L4 production au moment de l'audit: `https://voice.mysmartfood.fr/health` repond `engines.ready=true`, `llm_provider_active=openai` (`gpt-4o-mini`). L'ancien pipeline est vivant. Omni INT4 ne peut pas cohabiter. Aucun poids Omni n'a ete charge.
+
+Prototype lab, hors Twilio / Fastify: `prototypes/omni_s2s/proto_s2s.py`.
+Probe: `benchmarks/results/omni_s2s_probe.json` (`status=not_measured` sur cette machine, pas de CUDA).
+
+Integration Twilio interdite tant que le proto n'a pas mesure VRAM, latence S2S, francais parle, et tool calls thinker.

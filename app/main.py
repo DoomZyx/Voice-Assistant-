@@ -13,12 +13,10 @@ from pydantic import BaseModel, Field
 
 from app.config import Settings, apply_huggingface_token, get_settings
 from app.node_client import NodeApiClient, NodeApiError
-from app.pipeline.pipecat_runner import run_pipecat_session, should_use_pipecat
 from app.runtime import VoiceRuntime
 from app.session.manager import SessionManager
 from app.telemetry import VoiceTelemetry
 from app.tools.dispatcher import ToolDispatcher
-from app.twilio.protocol import parse_event
 
 logger = logging.getLogger("mysmartfood-voice")
 
@@ -201,14 +199,6 @@ def create_app(
         await websocket.accept()
         client = websocket.client
         logger.info("step=twilio.ws.accept client=%s", client)
-        if should_use_pipecat(settings):
-            await _run_pipecat_media_stream(websocket, app.state.runtime)
-            return
-        if (settings.voice_orchestrator or "").strip().lower() == "pipecat":
-            logger.warning(
-                "step=pipecat.unavailable fallback=native reason=%s",
-                "pipecat-ai absent",
-            )
         await _run_native_media_stream(websocket, app.state.sessions)
 
     return app
@@ -243,26 +233,6 @@ async def _run_native_media_stream(websocket: WebSocket, manager: SessionManager
             close_reason,
             manager.active_count,
         )
-
-
-async def _run_pipecat_media_stream(websocket: WebSocket, runtime: VoiceRuntime) -> None:
-    start_event: dict[str, Any] | None = None
-    try:
-        while start_event is None:
-            message = await _receive_twilio_message(websocket)
-            data = parse_event(message)
-            event = data.get("event")
-            if event == "start":
-                start_event = data
-                break
-            if event in {"stop", "closed"}:
-                logger.info("step=pipecat.twilio.stop_before_start")
-                return
-        await run_pipecat_session(websocket, runtime, start_event)
-    except WebSocketDisconnect:
-        logger.info("step=pipecat.ws.disconnect")
-    except Exception:
-        logger.exception("step=pipecat.ws.error")
 
 
 async def _receive_twilio_message(websocket: WebSocket) -> str | bytes:

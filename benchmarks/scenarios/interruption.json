@@ -1,0 +1,6 @@
+{
+  "id": "barge_in_vingt_et_une",
+  "bot": "J'ai de la place a vingt heures",
+  "user": "Plutot vingt et une heures.",
+  "expected": "ancienne reponse interrompue, nouveau check_availability"
+}

@@ -28,3 +28,36 @@ async def test_livekit_tools_dispatch_names():
     result = await info(None)
     assert result["success"] is True
     assert dispatcher.calls == [("get_restaurant_info", {})]
+
+
+@pytest.mark.asyncio
+async def test_reservation_tool_type_hints_resolve_run_context():
+    pytest.importorskip("livekit.agents")
+    from typing import get_type_hints
+
+    from livekit.agents import RunContext
+
+    from livekit_agent.tools.livekit_tools import build_livekit_tools
+
+    tools = build_livekit_tools(FakeDispatcher(), profile="reservations")  # type: ignore[arg-type]
+    create = next(
+        tool for tool in tools if "create_reservation" in str(getattr(tool, "__name__", tool))
+    )
+    hints = get_type_hints(create)
+    assert hints["context"] is RunContext
+
+
+@pytest.mark.asyncio
+async def test_livekit_tools_reservation_profile_hides_orders():
+    pytest.importorskip("livekit.agents")
+    from livekit_agent.tools.livekit_tools import build_livekit_tools
+
+    dispatcher = FakeDispatcher()
+    tools = build_livekit_tools(dispatcher, profile="reservations")  # type: ignore[arg-type]
+    names = [str(getattr(tool, "__name__", getattr(tool, "name", tool))) for tool in tools]
+    assert any("get_restaurant_info" in name for name in names)
+    assert any("create_reservation" in name for name in names)
+    assert any("check_table_availability" in name for name in names)
+    assert any("list_available_slots" in name for name in names)
+    assert not any("create_order" in name for name in names)
+    assert not any("get_menu" in name for name in names)

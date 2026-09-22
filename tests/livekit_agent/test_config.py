@@ -36,6 +36,7 @@ def test_llm_falls_back_to_vllm_env():
 def test_phase4_defaults_disable_tools_and_set_kokoro_speed():
     settings = LiveKitSettings(_env_file=None)
     assert settings.voice_tools_enabled is False
+    assert settings.voice_tools_profile == ""
     assert settings.livekit_kokoro_speed == 1.2
     assert settings.kokoro_lang == "fr-fr"
     assert settings.kokoro_voice == "ff_siwis"

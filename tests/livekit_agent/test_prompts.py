@@ -1,4 +1,8 @@
-from livekit_agent.prompts import build_phase4_instructions, build_tool_instructions
+from livekit_agent.prompts import (
+    build_phase4_instructions,
+    build_reservation_instructions,
+    build_tool_instructions,
+)
 
 
 def test_phase4_prompt_has_no_menu_and_no_tools():
@@ -17,3 +21,14 @@ def test_tool_prompt_does_not_embed_catalog():
     assert "get_menu" in text
     assert '"prix"' not in text
     assert "produits" not in text
+
+
+def test_reservation_prompt_has_no_order_tools():
+    text = build_reservation_instructions(restaurant_name="Le Comptoir")
+    assert "Le Comptoir" in text
+    assert "create_reservation" in text
+    assert "check_table_availability" in text
+    assert "list_available_slots" in text
+    assert "create_order" not in text
+    assert "get_menu" not in text
+    assert "json" not in text.casefold()

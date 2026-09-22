@@ -22,6 +22,23 @@ def test_first_sip_attributes_reads_remote_participants():
     assert first_sip_attributes(room)["sip.callId"] == "X"
 
 
+def test_first_sip_attributes_drops_non_sip_keys():
+    room = SimpleNamespace(
+        remote_participants={
+            "sip": SimpleNamespace(
+                attributes={
+                    "sip.to": "+33111111111",
+                    "restaurant_id": "tenant-llm",
+                    "tenant_id": "tenant-llm",
+                }
+            ),
+        }
+    )
+    attrs = first_sip_attributes(room)
+    assert attrs == {"sip.to": "+33111111111"}
+    assert "restaurant_id" not in attrs
+
+
 def test_identity_accepts_alt_sip_keys():
     settings = LiveKitSettings(_env_file=None, restaurant_id="dev")
     identity = extract_call_identity(

@@ -1,0 +1,96 @@
+{
+  "hardware": {
+    "available": false,
+    "reason": "nvidia-smi absent"
+  },
+  "order": [
+    "whisper-small-cuda",
+    "whisper-large-v3-turbo",
+    "nemotron-3.5-asr-streaming-0.6b",
+    "parakeet-tdt-0.6b-v3"
+  ],
+  "required_metrics": [
+    "partial_first_ms",
+    "partial_stable_ms",
+    "final_ms",
+    "wer_final",
+    "wer_partial",
+    "rtf",
+    "gpu_memory_mib",
+    "gpu_utilization"
+  ],
+  "note": "Ne pas juger les orchestrateurs sur speech_end->first_audio tant que le STT n'est pas en temps reel. Mesurer partiels puis WER final.",
+  "candidates": [
+    {
+      "id": "whisper-small-cuda",
+      "role": "baseline historique",
+      "model": "small",
+      "device": "cuda",
+      "streaming": false,
+      "status": "not measured: no NVIDIA GPU on this machine",
+      "partial_first_ms": null,
+      "partial_stable_ms": null,
+      "final_ms": null,
+      "wer_final": null,
+      "wer_partial": null,
+      "rtf": null,
+      "gpu_memory_mib": null,
+      "gpu_utilization": null
+    },
+    {
+      "id": "whisper-large-v3-turbo",
+      "role": "baseline Whisper qualitative",
+      "model": "large-v3-turbo",
+      "device": "cuda",
+      "streaming": false,
+      "status": "not measured: no NVIDIA GPU on this machine",
+      "partial_first_ms": null,
+      "partial_stable_ms": null,
+      "final_ms": null,
+      "wer_final": null,
+      "wer_partial": null,
+      "rtf": null,
+      "gpu_memory_mib": null,
+      "gpu_utilization": null
+    },
+    {
+      "id": "nemotron-3.5-asr-streaming-0.6b",
+      "role": "candidat streaming principal",
+      "model": "nvidia/nemotron-3.5-asr-streaming-0.6b",
+      "device": "cuda",
+      "streaming": true,
+      "chunks_ms": [
+        80,
+        160,
+        320,
+        560,
+        1120
+      ],
+      "status": "not measured: no NVIDIA GPU on this machine",
+      "partial_first_ms": null,
+      "partial_stable_ms": null,
+      "final_ms": null,
+      "wer_final": null,
+      "wer_partial": null,
+      "rtf": null,
+      "gpu_memory_mib": null,
+      "gpu_utilization": null
+    },
+    {
+      "id": "parakeet-tdt-0.6b-v3",
+      "role": "candidat qualite/perf supplementaire",
+      "model": "nvidia/parakeet-tdt-0.6b-v3",
+      "device": "cuda",
+      "streaming": false,
+      "status": "not measured: no NVIDIA GPU on this machine",
+      "partial_first_ms": null,
+      "partial_stable_ms": null,
+      "final_ms": null,
+      "wer_final": null,
+      "wer_partial": null,
+      "rtf": null,
+      "gpu_memory_mib": null,
+      "gpu_utilization": null
+    }
+  ]
+}

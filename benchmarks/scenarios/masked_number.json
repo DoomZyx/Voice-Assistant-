@@ -1,0 +1,5 @@
+{
+  "id": "masked_number",
+  "caller_number": "private",
+  "expected": "le telephone est demande au client; aucune valeur de transport n'est injectee dans create_appointment"
+}

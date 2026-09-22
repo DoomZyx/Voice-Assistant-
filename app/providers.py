@@ -16,7 +16,7 @@ TTS_PROVIDERS = ("kokoro",)
 LLM_PROVIDERS = ("vllm", "openai", "openai-compat")
 VAD_PROVIDERS = ("silero",)
 TURN_PROVIDERS = ("silence", "heuristic", "smart_turn")
-ORCHESTRATORS = ("native", "pipecat")
+ORCHESTRATORS = ("native",)
 
 
 @dataclass

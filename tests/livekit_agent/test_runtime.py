@@ -40,6 +40,18 @@ def test_tool_plan_wires_dispatcher():
     assert "get_restaurant_info" in plan.instructions
 
 
+def test_reservation_profile_uses_reservation_prompt():
+    plan = plan_session(
+        _settings(voice_tools_enabled=True, voice_tools_profile="reservations"),
+        "tenant-1",
+    )
+    assert plan.uses_tools is True
+    assert plan.dispatcher is not None
+    assert plan.dispatcher.profile == "reservations"
+    assert "create_reservation" in plan.instructions
+    assert "create_order" not in plan.instructions
+
+
 def test_bind_call_context_sets_structured_ids():
     ctx = SimpleNamespace(room=SimpleNamespace(name="call-abc"), log_context_fields=None)
     identity = bind_call_context(
@@ -54,6 +66,8 @@ def test_bind_call_context_sets_structured_ids():
         "call_id": "CA123",
         "session_id": "call-abc",
         "restaurant_id": "tenant-1",
+        "tenant_id": "tenant-1",
+        "instance_id": "tenant-1",
     }
 
 
@@ -80,6 +94,42 @@ async def test_sip_attributes_fall_back_when_wait_fails():
         room=SimpleNamespace(remote_participants={"p1": participant}),
     )
     assert await _sip_attributes(ctx) == {"sip.from": "+33600000000"}
+
+
+@pytest.mark.asyncio
+async def test_start_voice_session_reuses_bound_identity(monkeypatch):
+    from livekit_agent.session import CallIdentity, bind_job_identity
+
+    captured: dict = {}
+
+    class FakeSession:
+        def on(self, name, fn) -> None:
+            return None
+
+        async def start(self, room, agent) -> None:
+            captured["started"] = True
+
+    async def boom(*_args, **_kwargs):
+        raise AssertionError("DID lookup must not run again")
+
+    monkeypatch.setattr("livekit_agent.runtime._load_pipeline", lambda settings: FakeSession())
+    monkeypatch.setattr(
+        "livekit_agent.runtime.build_restaurant_agent",
+        lambda **kwargs: captured.setdefault("agent_kwargs", kwargs) or "agent",
+    )
+    monkeypatch.setattr("livekit_agent.runtime.resolve_session_identity", boom)
+
+    room = SimpleNamespace(name="call-reuse")
+    ctx = SimpleNamespace(room=room, log_context_fields=None)
+    bound = CallIdentity(call_id="CA-bound", session_id="call-reuse", restaurant_id="tenant-bound")
+    bind_job_identity(ctx, bound)
+    SESSIONS.release("call-reuse")
+    await start_voice_session(
+        ctx,
+        _settings(restaurant_id="tenant-other"),
+    )
+    assert ctx.log_context_fields["restaurant_id"] == "tenant-bound"
+    assert captured["started"] is True
 
 
 @pytest.mark.asyncio
@@ -113,3 +163,60 @@ async def test_start_voice_session_releases_registry_without_tools(monkeypatch):
     assert captured["agent_kwargs"]["dispatcher"] is None
     assert "metrics_collected" in captured["handlers"]
     assert ctx.log_context_fields["call_id"] == "call-teardown"
+
+
+@pytest.mark.asyncio
+async def test_start_voice_session_keeps_http_client_until_shutdown(monkeypatch):
+    captured: dict = {}
+    closed: list[str] = []
+
+    class FakeSession:
+        def on(self, name, fn) -> None:
+            return None
+
+        async def start(self, room, agent) -> None:
+            captured["started"] = True
+
+    class TrackingDispatcher:
+        def __init__(self) -> None:
+            self.profile = "reservations"
+
+        async def aclose(self) -> None:
+            closed.append("dispatcher")
+
+    class FakePlan:
+        dispatcher = TrackingDispatcher()
+        instructions = "reserve"
+        greeting = "bonjour"
+        uses_tools = True
+
+    monkeypatch.setattr("livekit_agent.runtime._load_pipeline", lambda settings: FakeSession())
+    monkeypatch.setattr(
+        "livekit_agent.runtime.build_restaurant_agent",
+        lambda **kwargs: captured.setdefault("agent_kwargs", kwargs) or "agent",
+    )
+    monkeypatch.setattr("livekit_agent.runtime.plan_session", lambda *a, **k: FakePlan())
+
+    shutdown_cbs: list = []
+
+    def add_shutdown_callback(cb) -> None:
+        shutdown_cbs.append(cb)
+
+    room = SimpleNamespace(name="call-keep-http")
+    ctx = SimpleNamespace(
+        room=room,
+        log_context_fields=None,
+        add_shutdown_callback=add_shutdown_callback,
+    )
+    SESSIONS.release("call-keep-http")
+    await start_voice_session(
+        ctx,
+        _settings(restaurant_id="tenant-1", voice_tools_enabled=True, voice_tools_profile="reservations"),
+    )
+    assert captured["started"] is True
+    assert closed == []
+    assert "call-keep-http" in SESSIONS._ids
+    assert len(shutdown_cbs) == 1
+    await shutdown_cbs[0]("test")
+    assert closed == ["dispatcher"]
+    assert "call-keep-http" not in SESSIONS._ids

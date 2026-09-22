@@ -1,0 +1,189 @@
+{
+  "provider": "faster-whisper",
+  "model": "small",
+  "preprocess": "off",
+  "samples": 18,
+  "wer_mean": 1.0219,
+  "latency_p50_ms": 27096.6,
+  "latency_p95_ms": 79138.4,
+  "rtf_mean": 20.404,
+  "hardware": "cpu",
+  "by_condition": {
+    "clean": {
+      "samples": 9,
+      "wer_mean": 0.9604,
+      "latency_p50_ms": 5450.8,
+      "empty_hypotheses": 0
+    },
+    "street": {
+      "samples": 9,
+      "wer_mean": 1.1944,
+      "latency_p50_ms": 48503.3,
+      "empty_hypotheses": 5
+    }
+  },
+  "details": [
+    {
+      "id": "table_quatre_2030__clean",
+      "condition": "clean",
+      "reference": "Bonsoir, vous avez une table pour quatre vers vingt heures trente ?",
+      "hypothesis": "Le chien, vous avez une table pour quatre veillères trente.",
+      "wer": 0.4545,
+      "latency_ms": 3959.9,
+      "rtf": 1.375
+    },
+    {
+      "id": "table_quatre_2030__street",
+      "condition": "street",
+      "reference": "Bonsoir, vous avez une table pour quatre vers vingt heures trente ?",
+      "hypothesis": "",
+      "wer": 1.0,
+      "latency_ms": 48503.3,
+      "rtf": 16.841
+    },
+    {
+      "id": "correction_six__clean",
+      "condition": "clean",
+      "reference": "Finalement on sera six.",
+      "hypothesis": "Vous n'en avez pas le sens.",
+      "wer": 1.5,
+      "latency_ms": 17223.1,
+      "rtf": 13.456
+    },
+    {
+      "id": "correction_six__street",
+      "condition": "street",
+      "reference": "Finalement on sera six.",
+      "hypothesis": "Sous-titres réalisés par la communauté d'Amara.org",
+      "wer": 1.75,
+      "latency_ms": 49075.8,
+      "rtf": 38.34
+    },
+    {
+      "id": "reserver_demain__clean",
+      "condition": "clean",
+      "reference": "Je voudrais reserver demain soir.",
+      "hypothesis": "Je vous l'ai dit dans ma chambre.",
+      "wer": 1.2,
+      "latency_ms": 13557.9,
+      "rtf": 8.474
+    },
+    {
+      "id": "reserver_demain__street",
+      "condition": "street",
+      "reference": "Je voudrais reserver demain soir.",
+      "hypothesis": "Reservation restaurant francais",
+      "wer": 1.0,
+      "latency_ms": 43957.5,
+      "rtf": 27.473
+    },
+    {
+      "id": "ouvert_dimanche__clean",
+      "condition": "clean",
+      "reference": "Vous etes ouverts dimanche midi ?",
+      "hypothesis": "Vous avez mis le chiffre au vol de la schnoude.",
+      "wer": 1.8,
+      "latency_ms": 19192.8,
+      "rtf": 10.71
+    },
+    {
+      "id": "ouvert_dimanche__street",
+      "condition": "street",
+      "reference": "Vous etes ouverts dimanche midi ?",
+      "hypothesis": "",
+      "wer": 1.0,
+      "latency_ms": 42840.0,
+      "rtf": 23.906
+    },
+    {
+      "id": "menus_tacos__clean",
+      "condition": "clean",
+      "reference": "Je voudrais deux menus tacos, un sans sauce.",
+      "hypothesis": "Je vous reviens du nid-taco en fin de chose.",
+      "wer": 1.0,
+      "latency_ms": 4092.3,
+      "rtf": 2.155
+    },
+    {
+      "id": "menus_tacos__street",
+      "condition": "street",
+      "reference": "Je voudrais deux menus tacos, un sans sauce.",
+      "hypothesis": "Sous-titrage ST' 501",
+      "wer": 1.0,
+      "latency_ms": 38619.0,
+      "rtf": 20.34
+    },
+    {
+      "id": "correction_heure__clean",
+      "condition": "clean",
+      "reference": "Attendez, non, plutot vingt et une heures.",
+      "hypothesis": "Attendez-vous plus que vingt heures.",
+      "wer": 0.7143,
+      "latency_ms": 3978.3,
+      "rtf": 2.36
+    },
+    {
+      "id": "correction_heure__street",
+      "condition": "street",
+      "reference": "Attendez, non, plutot vingt et une heures.",
+      "hypothesis": "",
+      "wer": 1.0,
+      "latency_ms": 79138.4,
+      "rtf": 46.956
+    },
+    {
+      "id": "nom_schmitt__clean",
+      "condition": "clean",
+      "reference": "C'est au nom de Schmitt.",
+      "hypothesis": "C'est tout le monde, Schmitt.",
+      "wer": 0.6,
+      "latency_ms": 5524.9,
+      "rtf": 4.887
+    },
+    {
+      "id": "nom_schmitt__street",
+      "condition": "street",
+      "reference": "C'est au nom de Schmitt.",
+      "hypothesis": "",
+      "wer": 1.0,
+      "latency_ms": 89613.8,
+      "rtf": 79.26
+    },
+    {
+      "id": "nom_nguyen__clean",
+      "condition": "clean",
+      "reference": "C'est pour Monsieur Nguyen.",
+      "hypothesis": "C'est pour nos filles et bien.",
+      "wer": 1.0,
+      "latency_ms": 5450.8,
+      "rtf": 4.483
+    },
+    {
+      "id": "nom_nguyen__street",
+      "condition": "street",
+      "reference": "C'est pour Monsieur Nguyen.",
+      "hypothesis": "",
+      "wer": 1.0,
+      "latency_ms": 60503.5,
+      "rtf": 49.756
+    },
+    {
+      "id": "annuler_soir__clean",
+      "condition": "clean",
+      "reference": "Vous pouvez annuler la reservation de ce soir ?",
+      "hypothesis": "Vous pouvez lancer la vidéo, la réservation de ce soir.",
+      "wer": 0.375,
+      "latency_ms": 4438.6,
+      "rtf": 1.858
+    },
+    {
+      "id": "annuler_soir__street",
+      "condition": "street",
+      "reference": "Vous pouvez annuler la reservation de ce soir ?",
+      "hypothesis": "Sous-titrage ST' 501",
+      "wer": 1.0,
+      "latency_ms": 35000.3,
+      "rtf": 14.648
+    }
+  ]
+}

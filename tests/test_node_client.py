@@ -139,6 +139,22 @@ async def test_create_reservation_http_error(settings: Settings):
 
 
 @pytest.mark.asyncio
+async def test_network_failure_becomes_node_api_error(settings: Settings):
+    """Une panne reseau/timeout httpx doit devenir un NodeApiError taggue
+    network_error, pas une exception httpx brute qui casserait la session."""
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("boom", request=request)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(fail), base_url=settings.node_base_url)
+    node = NodeApiClient(settings, client=http)
+    with pytest.raises(NodeApiError) as exc:
+        await node.check_availability("2026-09-09", tenant_id="ff3e05bf-2da5-465c-a7a2-f635021f49a9")
+    assert exc.value.payload == {"network_error": True}
+    await node.aclose()
+
+
+@pytest.mark.asyncio
 async def test_report_call_ended(client: NodeApiClient):
     data = await client.report_call_ended(
         {

@@ -1,0 +1,119 @@
+{
+  "hardware": "cpu",
+  "stt_llm_tts": "fakes for native control plane; Smart Turn uses corpus wavs",
+  "end_to_end_latency": "not used as orchestrator criterion (Whisper small CPU dominates)",
+  "default_unchanged": "VOICE_ORCHESTRATOR=native",
+  "native": {
+    "turn": {
+      "repeats": 5,
+      "immediate_false_eot": 0,
+      "held_then_flush_false_eot": 5,
+      "combined_before_hold": 5,
+      "premature_before_second_clause": 0,
+      "late_clause_after_hold_already_answered": 5,
+      "hesitation_held_then_combined": 5,
+      "correction_held_then_combined": 5,
+      "short_utterance_dropped": 5,
+      "eot_decision_p50_ms": 0.42,
+      "complete_speech_end_to_llm_p50_ms": 0.62,
+      "incomplete_speech_end_to_llm_p50_ms": 801.3,
+      "hold_ms": 800,
+      "note": "FakeSTT/LLM/TTS. 800 ms is the configured hold, not an optimum."
+    },
+    "barge_in": {
+      "repeats": 5,
+      "barge_in_detect_p50_ms": 0.01,
+      "buffer_clear_p50_ms": 0.04,
+      "media_frames_after_last_clear_p50": 1.0,
+      "leftover_speaking": 0,
+      "missing_clear": 0,
+      "timing_failures": 0
+    },
+    "false_interruptions": {
+      "repeats": 5,
+      "silence": 0,
+      "low_amplitude": 0,
+      "short_burst_50ms": 5,
+      "gaussian_noise_std400": 5,
+      "souffle_humain": "not measured: live Twilio+Whisper pipeline not started",
+      "bruit_restaurant_reel": "not measured: live Twilio+Whisper pipeline not started",
+      "echo_bot": "not measured: live Twilio+Whisper pipeline not started"
+    },
+    "cleanup": {
+      "repeats": 5,
+      "cleanup_failures": 0,
+      "double_hangup": 0,
+      "leftover_tasks": 0
+    },
+    "tools": {
+      "check_availability_ok": true,
+      "create_appointment_ok": true,
+      "forced_caller": true,
+      "update_appointment": {
+        "success": false,
+        "error": "Fonction inconnue: update_appointment"
+      },
+      "cancel_appointment": {
+        "success": false,
+        "error": "Fonction inconnue: cancel_appointment"
+      },
+      "note": "LLM_TOOLS exposes only check_availability and create_appointment on both orchestrators."
+    },
+    "eot": "heuristic + 800ms hold"
+  },
+  "pipecat": {
+    "smart_turn": {
+      "available": true,
+      "corpus": true,
+      "clean_full_complete": 9,
+      "clean_full_incomplete": 0,
+      "clean_samples": 9,
+      "cut45_incomplete": 0,
+      "cut45_complete": 9,
+      "hesitation_cut30_incomplete": 0,
+      "street_full_complete": 9,
+      "street_full_incomplete": 0,
+      "street_samples": 9,
+      "eot_decision_p50_ms": 173.94,
+      "full_twilio_pipeline": "not measured: live Twilio+Whisper pipeline not started",
+      "note": "Kokoro+mulaw corpus, not human telephone. cut45/cut30 proxy unfinished speech."
+    },
+    "cleanup_tools": {
+      "pipecat_installed": true,
+      "token_reject_closes_ws": true,
+      "hangups": 2,
+      "forced_caller": true,
+      "create_ok": true,
+      "update_appointment": {
+        "success": false,
+        "error": "Fonction inconnue: update_appointment"
+      },
+      "cancel_appointment": {
+        "success": false,
+        "error": "Fonction inconnue: cancel_appointment"
+      },
+      "live_pipeline_twilio": "not measured: live Twilio+Whisper pipeline not started",
+      "barge_in": "not measured: live Twilio+Whisper pipeline not started",
+      "false_interruptions": "not measured: live Twilio+Whisper pipeline not started",
+      "asyncio_tasks_after_hangup": "not measured: live Twilio+Whisper pipeline not started"
+    },
+    "eot": "LocalSmartTurnAnalyzerV3",
+    "full_twilio_pipeline": "not measured: live Twilio+Whisper pipeline not started"
+  },
+  "complexity": {
+    "native_realtime_loc": 944,
+    "pipecat_glue_loc": 254,
+    "shared_bootstrap_loc": 177,
+    "pipecat_version": "1.11.0",
+    "native_notes": "CallSession owns VAD, heuristic EOT, 800ms hold, barge-in, Twilio clear, turn/incomplete tasks, hangup idempotent close.",
+    "pipecat_notes": "Glue builds Twilio transport, WhisperSTT, OpenAILLM, KokoroTTS, Smart Turn v3, Fastify tools, greeting, hangup. allow_interruptions=True. _report_hangup is not idempotent. Live barge-in/EOT on Twilio not measured here."
+  },
+  "unmeasured": [
+    "Native/Pipecat speech_end -> first_audio on real STT/LLM/TTS",
+    "Pipecat live barge-in / Twilio clear / leftover audio",
+    "Pipecat live false interruptions (souffle, resto, echo)",
+    "Pipecat live pipeline close (WS, tasks, queues)",
+    "Human telephone audio for Smart Turn",
+    "update_appointment / cancel_appointment tools (absent both sides)"
+  ]
+}

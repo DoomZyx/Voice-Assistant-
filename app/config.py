@@ -97,7 +97,32 @@ def apply_huggingface_token(settings: Settings) -> None:
     os.environ.setdefault("HUGGING_FACE_HUB_TOKEN", token)
 
 
+def _require_critical_secrets(settings: Settings) -> None:
+    """Echoue vite au demarrage si un secret critique manque.
+
+    Un `NODE_API_KEY` ou `TWILIO_AUTH_TOKEN` vide reste fail-closed au runtime
+    (401 sur /v1/tools/*, token /media-stream toujours rejete), mais sans ce
+    garde-fou l'oubli d'une variable d'env ne se decouvre qu'au premier appel
+    rate en production plutot qu'au demarrage du service.
+    """
+    missing = [
+        name
+        for name, value in (
+            ("NODE_API_KEY", settings.node_api_key),
+            ("TWILIO_AUTH_TOKEN", settings.twilio_auth_token),
+        )
+        if not value.strip()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Configuration invalide : variable(s) manquante(s) : "
+            + ", ".join(missing)
+            + ". Renseigne-les dans .env avant de demarrer le voice-server."
+        )
+
+
 def get_settings() -> Settings:
     settings = Settings()
     apply_huggingface_token(settings)
+    _require_critical_secrets(settings)
     return settings

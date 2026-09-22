@@ -9,9 +9,20 @@ from livekit_agent.observability.audio_path import log_session_audio_contract
 from livekit_agent.observability.logging import emit_event
 from livekit_agent.observability.metrics import CallObserver
 from livekit_agent.observability.resources import SESSIONS
-from livekit_agent.prompts import build_phase4_instructions, build_tool_instructions
+from livekit_agent.prompts import (
+    build_phase4_instructions,
+    build_reservation_instructions,
+    build_tool_instructions,
+)
 from livekit_agent.restaurant_agent import build_restaurant_agent
-from livekit_agent.session import CallIdentity, extract_call_identity, first_sip_attributes
+from livekit_agent.session import (
+    CallIdentity,
+    bind_job_identity,
+    extract_call_identity,
+    first_sip_attributes,
+    read_job_identity,
+)
+from livekit_agent.tenant import resolve_session_identity
 from livekit_agent.stt.whisper import build_whisper_stt
 from livekit_agent.tools.dispatcher import ToolDispatcher
 from livekit_agent.tools.http import FastifyToolsClient
@@ -35,14 +46,22 @@ async def _sip_attributes(ctx: Any) -> dict[str, Any]:
         try:
             participant = await wait_for()
             attributes = getattr(participant, "attributes", None) or {}
-            if attributes:
-                return dict(attributes)
+            sip_only = {
+                str(key): value
+                for key, value in dict(attributes).items()
+                if str(key).startswith("sip.")
+            }
+            if sip_only:
+                return sip_only
         except Exception:
             pass
     return first_sip_attributes(getattr(ctx, "room", None))
 
 
 def bind_call_context(ctx: Any, settings: LiveKitSettings, sip_attributes: dict[str, Any]) -> CallIdentity:
+    existing = read_job_identity(ctx)
+    if existing is not None:
+        return existing
     room = getattr(ctx, "room", None)
     room_name = getattr(room, "name", "") or "unknown-room"
     identity = extract_call_identity(
@@ -50,24 +69,29 @@ def bind_call_context(ctx: Any, settings: LiveKitSettings, sip_attributes: dict[
         room_name=room_name,
         sip_attributes=sip_attributes,
     )
-    ctx.log_context_fields = {
-        "room": room_name,
-        "call_id": identity.call_id,
-        "session_id": identity.session_id,
-        "restaurant_id": identity.restaurant_id,
-    }
-    return identity
+    return bind_job_identity(ctx, identity)
 
 
-def plan_session(settings: LiveKitSettings, restaurant_id: str) -> SessionPlan:
+def plan_session(
+    settings: LiveKitSettings,
+    restaurant_id: str,
+    session_store: dict[str, Any] | None = None,
+) -> SessionPlan:
+    profile = (settings.voice_tools_profile or "").strip().lower()
     dispatcher = None
     if settings.voice_tools_enabled:
-        dispatcher = ToolDispatcher(FastifyToolsClient(settings), restaurant_id)
-    instructions = (
-        build_tool_instructions(restaurant_name=settings.restaurant_name)
-        if dispatcher is not None
-        else build_phase4_instructions(restaurant_name=settings.restaurant_name)
-    )
+        dispatcher = ToolDispatcher(
+            FastifyToolsClient(settings),
+            restaurant_id,
+            session_store=session_store,
+            profile=profile,
+        )
+    if dispatcher is None:
+        instructions = build_phase4_instructions(restaurant_name=settings.restaurant_name)
+    elif profile == "reservations":
+        instructions = build_reservation_instructions(restaurant_name=settings.restaurant_name)
+    else:
+        instructions = build_tool_instructions(restaurant_name=settings.restaurant_name)
     return SessionPlan(
         dispatcher=dispatcher,
         instructions=instructions,
@@ -91,7 +115,17 @@ def _load_pipeline(settings: LiveKitSettings):
 
 async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
     sip_attributes = await _sip_attributes(ctx)
-    identity = bind_call_context(ctx, settings, sip_attributes)
+    existing = read_job_identity(ctx)
+    if existing is None:
+        room = getattr(ctx, "room", None)
+        extracted = extract_call_identity(
+            settings,
+            room_name=getattr(room, "name", "") or "unknown-room",
+            sip_attributes=sip_attributes,
+        )
+        identity = bind_job_identity(ctx, await resolve_session_identity(settings, extracted))
+    else:
+        identity = existing
     observer = CallObserver(identity)
     concurrent = SESSIONS.register(identity.session_id)
     emit_event("session.start", concurrent_sessions=concurrent, **observer._ids())
@@ -101,12 +135,19 @@ async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
         kokoro_hz=settings.tts_sample_rate,
     )
 
-    plan = plan_session(settings, identity.restaurant_id)
+    userdata = getattr(ctx, "userdata", None)
+    if not isinstance(userdata, dict):
+        userdata = {}
+        ctx.userdata = userdata
+    if identity.caller_number and not userdata.get("caller_phone"):
+        userdata["caller_phone"] = identity.caller_number
+    plan = plan_session(settings, identity.restaurant_id, session_store=userdata)
     dispatcher = plan.dispatcher
     agent = build_restaurant_agent(
         instructions=plan.instructions,
         greeting=plan.greeting,
         dispatcher=dispatcher,
+        tools_profile=(settings.voice_tools_profile or "").strip().lower(),
     )
     session = _load_pipeline(settings)
 
@@ -143,10 +184,27 @@ async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
         except Exception:
             emit_event("turn.hook_missing", hook=event_name, **observer._ids())
 
-    try:
-        await session.start(room=getattr(ctx, "room", None), agent=agent)
-    finally:
+    # session.start() returns after connect/setup, not when the PSTN call ends.
+    # Closing Fastify here killed tools mid-call (greeting OK, then silence).
+    cleaned = False
+
+    async def _cleanup(_reason: str = "") -> None:
+        nonlocal cleaned
+        if cleaned:
+            return
+        cleaned = True
         observer.on_session_end()
         SESSIONS.release(identity.session_id)
         if dispatcher is not None:
             await dispatcher.aclose()
+
+    add_shutdown = getattr(ctx, "add_shutdown_callback", None)
+    if callable(add_shutdown):
+        add_shutdown(_cleanup)
+        await session.start(room=getattr(ctx, "room", None), agent=agent)
+        return
+
+    try:
+        await session.start(room=getattr(ctx, "room", None), agent=agent)
+    finally:
+        await _cleanup()

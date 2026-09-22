@@ -37,18 +37,37 @@ class NodeApiClient:
             return {}
         return {"x-tenant-id": value}
 
+    async def _request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
+        """Centralise les appels HTTP vers Fastify.
+
+        Une panne reseau/timeout httpx devient un NodeApiError (meme famille
+        que les erreurs HTTP >= 400) au lieu d'une exception httpx brute : les
+        appelants (dispatcher d'outils, /v1/tools/*) savent deja convertir un
+        NodeApiError en reponse conversationnelle pour le LLM plutot que de
+        laisser la session vocale planter sur une exception inattendue.
+        """
+        try:
+            return await self._client.request(method, url, **kwargs)
+        except httpx.HTTPError as exc:
+            raise NodeApiError(
+                f"Fastify injoignable ({type(exc).__name__})",
+                status_code=None,
+                payload={"network_error": True},
+            ) from exc
+
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
 
     async def ping(self) -> dict[str, Any]:
-        response = await self._client.get("/api/ping")
+        response = await self._request("GET", "/api/ping")
         self._raise_for_status(response, "ping Node")
         return response.json()
 
     async def get_voice_context(self, instance_id: str) -> dict[str, Any]:
         safe_instance_id = quote(instance_id, safe="")
-        response = await self._client.get(
+        response = await self._request(
+            "GET",
             f"/api/voice/context/{safe_instance_id}",
             headers=self._tenant_headers(instance_id),
         )
@@ -60,7 +79,8 @@ class NodeApiClient:
 
     async def get_voice_snapshot(self, instance_id: str) -> dict[str, Any]:
         safe_instance_id = quote(instance_id, safe="")
-        response = await self._client.get(
+        response = await self._request(
+            "GET",
             f"/api/voice/context/{safe_instance_id}/snapshot",
             headers=self._tenant_headers(instance_id),
         )
@@ -73,12 +93,14 @@ class NodeApiClient:
     async def check_availability(self, date: str, tenant_id: str | None = None) -> dict[str, Any]:
         headers = self._tenant_headers(tenant_id)
         orders, reservations = await asyncio.gather(
-            self._client.get(
+            self._request(
+                "GET",
                 "/api/orders/ai/available-slots",
                 params={"date": date},
                 headers=headers,
             ),
-            self._client.get(
+            self._request(
+                "GET",
                 "/api/reservations/ai/available-slots",
                 params={"date": date},
                 headers=headers,
@@ -123,7 +145,8 @@ class NodeApiClient:
             "nombrePersonnes": payload.get("nombrePersonnes") or 1,
             "notes_internes": payload.get("notes_internes") or "",
         }
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             "/api/reservations/ai/create",
             json=body,
             headers=self._tenant_headers(tenant_id),
@@ -131,7 +154,8 @@ class NodeApiClient:
         return self._parse_create(response, "reservation")
 
     async def report_usage(self, payload: dict[str, Any]) -> None:
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             "/api/voice/usage",
             json=payload,
             headers=self._tenant_headers(payload.get("instanceId")),
@@ -157,7 +181,8 @@ class NodeApiClient:
             "description": payload.get("description") or "",
             "commandes": payload.get("commandes") or [],
         }
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             "/api/orders/ai/create",
             json=body,
             headers=self._tenant_headers(tenant_id),
@@ -169,7 +194,8 @@ class NodeApiClient:
         payload: dict[str, Any],
         tenant_id: str | None = None,
     ) -> dict[str, Any]:
-        response = await self._client.post(
+        response = await self._request(
+            "POST",
             "/api/voice/call-ended",
             json=payload,
             headers=self._tenant_headers(tenant_id or payload.get("instanceId")),

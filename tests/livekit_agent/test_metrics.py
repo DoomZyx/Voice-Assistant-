@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from livekit_agent.observability.metrics import CallObserver
+from livekit_agent.observability.metrics import CallObserver, LatencyBook
 from livekit_agent.session import CallIdentity
 
 
@@ -34,3 +34,14 @@ def test_observer_logs_first_transcript_and_livekit_metrics(caplog):
     assert "step=llm.time_to_first_token" in joined
     assert "step=tts.time_to_first_audio" in joined
     assert "step=session.end" in joined
+    assert "bonjour" not in joined
+    assert "input_characters=7" in joined
+    assert "p50_ms=" in joined
+    assert "p95_ms=" in joined
+
+
+def test_latency_book_exposes_bounded_p50_and_p95():
+    book = LatencyBook(max_samples=3)
+    for value in (10, 20, 100, 30):
+        snapshot = book.record("llm_ttft", value)
+    assert snapshot == {"sample_count": 3, "p50_ms": 30, "p95_ms": 100}

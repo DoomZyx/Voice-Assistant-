@@ -1,0 +1,6 @@
+{
+  "id": "reservation_quatre_demain",
+  "user": "Je voudrais reserver pour quatre demain a 20 heures.",
+  "expected_tool": "check_availability",
+  "forbidden": ["confirmee", "Votre reservation est confirmee"]
+}

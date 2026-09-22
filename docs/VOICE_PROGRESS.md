@@ -88,15 +88,13 @@ curl -s http://127.0.0.1:8090/health
 
 ## Prochaine etape
 
-Brancher la **L4 24 Go** et executer, dans cet ordre:
+La cible n'est plus un A/B STT GPU. C'est Qwen2.5-Omni-7B GPTQ-Int4 en speech-to-speech.
 
-1. Whisper small CUDA  
-2. Whisper large-v3-turbo  
-3. Nemotron 3.5 ASR Streaming 0.6B  
-4. Parakeet TDT 0.6B v3  
+1. Fenetre de mesure sur la L4: arreter Whisper / vLLM / Kokoro (confirmation operateur, la ligne est live).
+2. Executer `python -m prototypes.omni_s2s.proto_s2s` depuis `voice-server`.
+3. Lire `benchmarks/results/omni_s2s_probe.json`: VRAM, latence audio->audio, francais, tool calls thinker.
+4. Seulement si GO: Twilio streaming + interruptions, puis outils Fastify. Supprimer l'ancien pipeline. Pas deux orchestrateurs.
 
-Metriques: `partial_first_ms`, `partial_stable_ms`, `final_ms`, WER final/partiel, RTF, VRAM, GPU util.
+Delete-zone (ne pas recreer comme cible): A/B Whisper turbo / Parakeet / Nemotron / Smart Turn comme moteur conversationnel.
 
-Puis seulement: vrai A/B Native vs Pipecat sur appels Twilio.
-
-Sources: `docs/VOICE_AUDIT.md`, `benchmarks/results/ab_orchestrator.json`, `benchmarks/results/barge_in_confirm.json`, `benchmarks/results/stt_l4_probe.json`.
+Sources: `docs/VOICE_AUDIT.md` section 19, `benchmarks/results/omni_s2s_probe.json`.

@@ -1,0 +1,6 @@
+{
+  "id": "cross_tenant_attempt",
+  "session_tenant": "tenant-a",
+  "malicious_tool_arguments": {"tenant_id": "tenant-b", "restaurant_id": "tenant-b"},
+  "expected": "tenant-b est ignore ou refuse; tous les appels Fastify restent x-tenant-id=tenant-a"
+}
