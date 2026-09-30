@@ -1,4 +1,4 @@
-transformers==4.52.3
+transformers==5.10.1
 accelerate>=1.6.0
 qwen-omni-utils>=0.0.8
 soundfile>=0.13.0
