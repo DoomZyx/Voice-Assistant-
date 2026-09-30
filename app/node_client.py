@@ -142,7 +142,7 @@ class NodeApiClient:
             "date": payload.get("date"),
             "time": payload.get("time") or payload.get("heure"),
             "description": payload.get("description") or "",
-            "nombrePersonnes": payload.get("nombrePersonnes") or 1,
+            "nombrePersonnes": payload.get("nombrePersonnes"),
             "notes_internes": payload.get("notes_internes") or "",
         }
         response = await self._request(

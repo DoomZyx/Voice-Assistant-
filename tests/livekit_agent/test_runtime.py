@@ -6,6 +6,7 @@ from livekit_agent.config import LiveKitSettings
 from livekit_agent.observability.resources import SESSIONS
 from livekit_agent.prompts import build_phase4_instructions
 from livekit_agent.runtime import (
+    _load_restaurant_name,
     _sip_attributes,
     bind_call_context,
     plan_session,
@@ -28,7 +29,7 @@ def test_phase4_plan_has_no_fastify_dispatcher():
     plan = plan_session(_settings(), "tenant-1")
     assert plan.uses_tools is False
     assert plan.dispatcher is None
-    assert plan.greeting == "Bonjour, je vous ecoute."
+    assert plan.greeting == "Le Comptoir bonjour."
     assert plan.instructions == build_phase4_instructions(restaurant_name="Le Comptoir")
     assert "get_restaurant_info" not in plan.instructions
 
@@ -50,6 +51,66 @@ def test_reservation_profile_uses_reservation_prompt():
     assert plan.dispatcher.profile == "reservations"
     assert "create_reservation" in plan.instructions
     assert "create_order" not in plan.instructions
+
+
+def test_full_profile_uses_both_business_flows_and_tenant_name():
+    plan = plan_session(
+        _settings(voice_tools_enabled=True, voice_tools_profile="full"),
+        "tenant-2",
+        restaurant_name="Chez Alice",
+    )
+    assert plan.dispatcher is not None
+    assert plan.dispatcher.profile == "full"
+    assert plan.greeting == "Chez Alice bonjour."
+    assert "Chez Alice" in plan.instructions
+    assert "create_reservation" in plan.instructions
+    assert "create_order" in plan.instructions
+    assert "chaises hautes" in plan.instructions
+
+
+@pytest.mark.asyncio
+async def test_load_restaurant_name_uses_fastify_tenant_context(monkeypatch):
+    import httpx
+
+    from livekit_agent.tools.http import FastifyToolsClient
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("x-tenant-id")))
+        return httpx.Response(200, json={"data": {"restaurantInfo": {"nom": "Chez Alice"}}})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://fastify.test"
+    )
+    monkeypatch.setattr(
+        "livekit_agent.runtime.FastifyToolsClient",
+        lambda settings: FastifyToolsClient(settings, client=client),
+    )
+    assert await _load_restaurant_name(_settings(), "tenant-2") == "Chez Alice"
+    assert seen == [("/api/voice/context/tenant-2", "tenant-2")]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_start_voice_session_rejects_missing_restaurant_name(monkeypatch):
+    async def missing_name(_settings, restaurant_id):
+        assert restaurant_id == "tenant-1"
+        return ""
+
+    def must_not_start(_settings):
+        raise AssertionError("Audio session must not start without restaurant name")
+
+    monkeypatch.setattr("livekit_agent.runtime._load_restaurant_name", missing_name)
+    monkeypatch.setattr("livekit_agent.runtime._load_pipeline", must_not_start)
+    ctx = SimpleNamespace(room=SimpleNamespace(name="call-no-name"), log_context_fields=None)
+    SESSIONS.release("call-no-name")
+    with pytest.raises(RuntimeError, match="Restaurant name unavailable"):
+        await start_voice_session(
+            ctx,
+            _settings(restaurant_id="tenant-1", voice_tools_enabled=True, voice_tools_profile="full"),
+        )
+    assert "call-no-name" not in SESSIONS._ids
 
 
 def test_bind_call_context_sets_structured_ids():
@@ -196,6 +257,11 @@ async def test_start_voice_session_keeps_http_client_until_shutdown(monkeypatch)
         lambda **kwargs: captured.setdefault("agent_kwargs", kwargs) or "agent",
     )
     monkeypatch.setattr("livekit_agent.runtime.plan_session", lambda *a, **k: FakePlan())
+    async def tenant_name(_settings, restaurant_id):
+        assert restaurant_id == "tenant-1"
+        return "Chez Alice"
+
+    monkeypatch.setattr("livekit_agent.runtime._load_restaurant_name", tenant_name)
 
     shutdown_cbs: list = []
 

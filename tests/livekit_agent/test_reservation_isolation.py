@@ -47,19 +47,27 @@ def _handler(request: httpx.Request) -> httpx.Response:
     if path == "/api/reservations/availability":
         if tenant != TENANT_A:
             return httpx.Response(403, json={"error": "forbidden"})
-        return httpx.Response(
-            200,
-            json={"success": True, "available": query.get("heure") == "20:00", "remainingCoversSoir": 8},
-        )
-    if path == "/api/reservations/ai/available-slots":
-        if tenant != TENANT_A:
-            return httpx.Response(403, json={"error": "forbidden"})
+        covers = int(query.get("nombrePersonnes", "1"))
         return httpx.Response(
             200,
             json={
                 "success": True,
-                "availableSlots": ["19:30", "20:00", "20:30"],
+                "available": query.get("heure") == "20:00" and covers <= 8,
                 "remainingCoversSoir": 8,
+                "requestedCovers": covers,
+            },
+        )
+    if path == "/api/reservations/ai/available-slots":
+        if tenant != TENANT_A:
+            return httpx.Response(403, json={"error": "forbidden"})
+        covers = int(query.get("nombrePersonnes", "1"))
+        return httpx.Response(
+            200,
+            json={
+                "success": True,
+                "availableSlots": ["12:00", "19:30", "20:00", "20:30"] if covers <= 8 else [],
+                "remainingCoversSoir": 8,
+                "requestedCovers": covers,
                 "message": "ok",
             },
         )
@@ -134,14 +142,28 @@ async def test_did_a_only_calls_fastify_as_a():
     )
     slots = await dispatcher.dispatch(
         "check_table_availability",
-        {"date": "2026-09-21", "heure": "20:00", "restaurant_id": TENANT_B},
+        {"date": "2026-09-21", "heure": "20:00", "nombrePersonnes": 4, "restaurant_id": TENANT_B},
     )
     assert info["success"] is True
     assert info["data"]["nom"] == "Resto A"
     assert slots["success"] is True
     assert slots["data"]["available"] is True
+    assert slots["data"]["requestedCovers"] == 4
+    assert SEEN[-1][3]["query"]["nombrePersonnes"] == "4"
     assert _tenant_headers() == [TENANT_A, TENANT_A]
     assert all(TENANT_B not in path for _method, path, _body, _meta in SEEN)
+    await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_create_reservation_needs_party_size_before_backend_call():
+    dispatcher = _dispatcher(TENANT_A)
+    result = await dispatcher.dispatch(
+        "create_reservation",
+        {"name": "Ada", "telephone": "0600000000", "date": "2026-09-21", "time": "20:00"},
+    )
+    assert result["error"] == "PARTY_SIZE_REQUIRED"
+    assert SEEN == []
     await dispatcher.aclose()
 
 
@@ -244,11 +266,33 @@ async def test_list_available_slots_returns_one_alternative():
     dispatcher = _dispatcher(TENANT_A)
     result = await dispatcher.dispatch(
         "list_available_slots",
-        {"date": "2026-09-21", "heure": "20:00"},
+        {"date": "2026-09-21", "heure": "20:00", "nombrePersonnes": 4},
     )
     assert result["success"] is True
     assert result["data"]["alternative"] == "19:30"
     assert "availableSlots" not in result["data"]
+    assert SEEN[-1][3]["query"]["nombrePersonnes"] == "4"
+    await dispatcher.aclose()
+
+
+@pytest.mark.asyncio
+async def test_table_availability_and_alternative_respect_party_size():
+    dispatcher = _dispatcher(TENANT_A)
+    unavailable = await dispatcher.dispatch(
+        "check_table_availability",
+        {"date": "2026-09-21", "heure": "20:00", "nombrePersonnes": 9},
+    )
+    assert unavailable["success"] is True
+    assert unavailable["data"]["available"] is False
+    alternative = await dispatcher.dispatch(
+        "list_available_slots",
+        {"date": "2026-09-21", "heure": "20:00", "nombrePersonnes": 9},
+    )
+    assert alternative["data"]["alternative"] is None
+    missing = await dispatcher.dispatch(
+        "check_table_availability", {"date": "2026-09-21", "heure": "20:00"}
+    )
+    assert missing["error"] == "PARTY_SIZE_REQUIRED"
     await dispatcher.aclose()
 
 
@@ -294,6 +338,7 @@ async def test_backend_failure_does_not_invent_confirmation():
             "telephone": "0600000000",
             "date": "2026-09-21",
             "time": "20:00",
+            "nombrePersonnes": 2,
         },
     )
     assert result["success"] is False

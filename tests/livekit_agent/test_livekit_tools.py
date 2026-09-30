@@ -61,3 +61,18 @@ async def test_livekit_tools_reservation_profile_hides_orders():
     assert any("list_available_slots" in name for name in names)
     assert not any("create_order" in name for name in names)
     assert not any("get_menu" in name for name in names)
+
+
+@pytest.mark.asyncio
+async def test_full_profile_exposes_reservations_and_takeaway():
+    pytest.importorskip("livekit.agents")
+    from livekit_agent.tools.livekit_tools import build_livekit_tools
+
+    tools = build_livekit_tools(FakeDispatcher(), profile="full")  # type: ignore[arg-type]
+    names = [str(getattr(tool, "__name__", getattr(tool, "name", tool))) for tool in tools]
+    assert any("get_restaurant_info" in name for name in names)
+    assert any("check_table_availability" in name for name in names)
+    assert any("create_reservation" in name for name in names)
+    assert any("get_menu" in name for name in names)
+    assert any("create_order" in name for name in names)
+    assert not any("update_order" in name for name in names)

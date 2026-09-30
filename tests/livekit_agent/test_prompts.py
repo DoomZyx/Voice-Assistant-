@@ -1,4 +1,5 @@
 from livekit_agent.prompts import (
+    build_full_instructions,
     build_phase4_instructions,
     build_reservation_instructions,
     build_tool_instructions,
@@ -32,3 +33,13 @@ def test_reservation_prompt_has_no_order_tools():
     assert "create_order" not in text
     assert "get_menu" not in text
     assert "json" not in text.casefold()
+
+
+def test_full_prompt_covers_requests_and_requires_write_success():
+    text = build_full_instructions(restaurant_name="Chez Alice")
+    assert "Chez Alice" in text
+    assert "create_reservation" in text
+    assert "create_order" in text
+    assert "get_restaurant_info" in text
+    assert "chaises hautes" in text
+    assert "success=true" in text

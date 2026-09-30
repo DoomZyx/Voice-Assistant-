@@ -108,19 +108,27 @@ class FastifyToolsClient:
         tenant_id: str,
         date: str,
         heure: str,
+        nombre_personnes: int,
         duree: int = 60,
     ) -> dict[str, Any]:
         response = await self._client.get(
             "/api/reservations/availability",
-            params={"date": date, "heure": heure, "duree": duree},
+            params={
+                "date": date,
+                "heure": heure,
+                "duree": duree,
+                "nombrePersonnes": nombre_personnes,
+            },
             headers=self._tenant_headers(tenant_id),
         )
         return self._require_success_object(response, "disponibilite table")
 
-    async def get_available_slots(self, tenant_id: str, date: str) -> dict[str, Any]:
+    async def get_available_slots(
+        self, tenant_id: str, date: str, nombre_personnes: int
+    ) -> dict[str, Any]:
         response = await self._client.get(
             "/api/reservations/ai/available-slots",
-            params={"date": date},
+            params={"date": date, "nombrePersonnes": nombre_personnes},
             headers=self._tenant_headers(tenant_id),
         )
         return self._require_success_object(response, "creneaux reservation")

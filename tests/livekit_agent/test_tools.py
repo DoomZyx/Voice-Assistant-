@@ -28,6 +28,10 @@ RESTAURANT_CONTEXT = {
         },
         "availability": True,
         "timezone": "Europe/Paris",
+        "amenities": [
+            {"slug": "pmr", "label": "Accès PMR", "status": "available"},
+            {"slug": "highchair", "label": "Chaises bébé", "status": "available", "quantity": 3},
+        ],
     },
 }
 
@@ -88,6 +92,7 @@ async def test_get_restaurant_info_strips_menu():
     assert result["success"] is True
     assert result["data"]["nom"] == "Le Comptoir"
     assert "menu" not in result["data"]
+    assert result["data"]["amenities"][1]["quantity"] == 3
     await dispatcher.aclose()
 
 

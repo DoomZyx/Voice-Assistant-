@@ -25,20 +25,22 @@ def build_livekit_tools(dispatcher: ToolDispatcher, *, profile: str = "") -> lis
         context: RunContext,
         date: str,
         heure: str,
+        nombrePersonnes: int,
         duree: int = 60,
     ) -> dict[str, Any]:
         return await dispatcher.dispatch(
             "check_table_availability",
-            {"date": date, "heure": heure, "duree": duree},
+            {"date": date, "heure": heure, "nombrePersonnes": nombrePersonnes, "duree": duree},
         )
 
     @function_tool
     async def list_available_slots(
         context: RunContext,
         date: str,
+        nombrePersonnes: int,
         heure: str = "",
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"date": date}
+        payload: dict[str, Any] = {"date": date, "nombrePersonnes": nombrePersonnes}
         if heure:
             payload["heure"] = heure
         return await dispatcher.dispatch("list_available_slots", payload)
@@ -49,8 +51,8 @@ def build_livekit_tools(dispatcher: ToolDispatcher, *, profile: str = "") -> lis
         date: str,
         time: str,
         name: str,
+        nombrePersonnes: int,
         telephone: str = "",
-        nombrePersonnes: int = 1,
         description: str = "",
     ) -> dict[str, Any]:
         return await dispatcher.dispatch(
@@ -151,6 +153,20 @@ def build_livekit_tools(dispatcher: ToolDispatcher, *, profile: str = "") -> lis
             create_reservation,
             modify_reservation,
             cancel_reservation,
+        ]
+    if (profile or "").strip().lower() == "full":
+        return [
+            get_restaurant_info,
+            check_table_availability,
+            list_available_slots,
+            create_reservation,
+            modify_reservation,
+            cancel_reservation,
+            get_menu,
+            search_product,
+            get_product,
+            check_product_availability,
+            create_order,
         ]
     return [
         get_restaurant_info,

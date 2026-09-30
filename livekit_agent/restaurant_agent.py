@@ -25,6 +25,6 @@ def build_restaurant_agent(
             self._greeting = greeting
 
         async def on_enter(self) -> None:
-            await self.session.generate_reply(instructions=self._greeting)
+            await self.session.say(self._greeting)
 
     return RestaurantAgent()

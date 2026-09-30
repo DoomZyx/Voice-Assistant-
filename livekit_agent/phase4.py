@@ -37,8 +37,8 @@ def phase4_readiness(settings: LiveKitSettings) -> Phase4Report:
     missing = missing_runtime_settings(settings)
     blockers: list[str] = []
     profile = (settings.voice_tools_profile or "").strip().lower()
-    if settings.voice_tools_enabled and profile != "reservations":
+    if settings.voice_tools_enabled and profile not in {"reservations", "full"}:
         blockers.append(
-            "VOICE_TOOLS_ENABLED=true : tools autorises seulement avec VOICE_TOOLS_PROFILE=reservations"
+            "VOICE_TOOLS_ENABLED=true : VOICE_TOOLS_PROFILE doit valoir reservations ou full"
         )
     return Phase4Report(ready=not missing and not blockers, missing=missing, blockers=blockers)

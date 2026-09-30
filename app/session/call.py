@@ -810,6 +810,7 @@ class CallSession:
             "instanceId": self.instance_id,
             "streamSid": self.stream_sid,
             "callSid": self.call_sid,
+            "durationSeconds": round(max(0.0, time.monotonic() - self._started_at), 1),
             "turns": stt_turns(self._history),
             "liveCreate": self._live_create,
         }

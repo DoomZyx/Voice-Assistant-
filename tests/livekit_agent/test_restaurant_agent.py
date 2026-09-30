@@ -9,8 +9,8 @@ async def test_restaurant_agent_greets_and_has_no_tools_without_dispatcher():
     seen: list[str] = []
 
     class FakeSession:
-        async def generate_reply(self, instructions: str) -> None:
-            seen.append(instructions)
+        async def say(self, text: str) -> None:
+            seen.append(text)
 
     agent = build_restaurant_agent(
         instructions="phase4",

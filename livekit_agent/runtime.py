@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
+
 from livekit_agent.config import LiveKitSettings
 from livekit_agent.llm.client import build_llm
 from livekit_agent.observability.audio_path import log_session_audio_contract
@@ -10,6 +12,7 @@ from livekit_agent.observability.logging import emit_event
 from livekit_agent.observability.metrics import CallObserver
 from livekit_agent.observability.resources import SESSIONS
 from livekit_agent.prompts import (
+    build_full_instructions,
     build_phase4_instructions,
     build_reservation_instructions,
     build_tool_instructions,
@@ -25,7 +28,7 @@ from livekit_agent.session import (
 from livekit_agent.tenant import resolve_session_identity
 from livekit_agent.stt.whisper import build_whisper_stt
 from livekit_agent.tools.dispatcher import ToolDispatcher
-from livekit_agent.tools.http import FastifyToolsClient
+from livekit_agent.tools.http import FastifyApiError, FastifyToolsClient
 from livekit_agent.tts.kokoro import build_kokoro_tts
 
 
@@ -76,8 +79,11 @@ def plan_session(
     settings: LiveKitSettings,
     restaurant_id: str,
     session_store: dict[str, Any] | None = None,
+    restaurant_name: str | None = None,
 ) -> SessionPlan:
     profile = (settings.voice_tools_profile or "").strip().lower()
+    name = settings.restaurant_name if restaurant_name is None else restaurant_name
+    name = name.strip()
     dispatcher = None
     if settings.voice_tools_enabled:
         dispatcher = ToolDispatcher(
@@ -87,16 +93,33 @@ def plan_session(
             profile=profile,
         )
     if dispatcher is None:
-        instructions = build_phase4_instructions(restaurant_name=settings.restaurant_name)
+        instructions = build_phase4_instructions(restaurant_name=name)
     elif profile == "reservations":
-        instructions = build_reservation_instructions(restaurant_name=settings.restaurant_name)
+        instructions = build_reservation_instructions(restaurant_name=name)
+    elif profile == "full":
+        instructions = build_full_instructions(restaurant_name=name)
     else:
-        instructions = build_tool_instructions(restaurant_name=settings.restaurant_name)
+        instructions = build_tool_instructions(restaurant_name=name)
     return SessionPlan(
         dispatcher=dispatcher,
         instructions=instructions,
-        greeting=settings.greeting_text,
+        greeting=f"{name} bonjour." if name else settings.greeting_text,
     )
+
+
+async def _load_restaurant_name(settings: LiveKitSettings, restaurant_id: str) -> str:
+    if not restaurant_id:
+        return ""
+    client = FastifyToolsClient(settings)
+    try:
+        context = await client.get_voice_context(restaurant_id)
+        info = context.get("restaurantInfo")
+        return str(info.get("nom") or "").strip() if isinstance(info, dict) else ""
+    except (FastifyApiError, httpx.HTTPError) as exc:
+        emit_event("restaurant.context_unavailable", restaurant_id=restaurant_id, reason=str(exc))
+        return ""
+    finally:
+        await client.aclose()
 
 
 def _load_pipeline(settings: LiveKitSettings):
@@ -126,6 +149,12 @@ async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
         identity = bind_job_identity(ctx, await resolve_session_identity(settings, extracted))
     else:
         identity = existing
+    restaurant_name = None
+    if settings.voice_tools_enabled:
+        restaurant_name = await _load_restaurant_name(settings, identity.restaurant_id)
+        if not restaurant_name:
+            emit_event("restaurant.name_unavailable", restaurant_id=identity.restaurant_id)
+            raise RuntimeError("Restaurant name unavailable for voice greeting")
     observer = CallObserver(identity)
     concurrent = SESSIONS.register(identity.session_id)
     emit_event("session.start", concurrent_sessions=concurrent, **observer._ids())
@@ -141,7 +170,12 @@ async def start_voice_session(ctx: Any, settings: LiveKitSettings) -> None:
         ctx.userdata = userdata
     if identity.caller_number and not userdata.get("caller_phone"):
         userdata["caller_phone"] = identity.caller_number
-    plan = plan_session(settings, identity.restaurant_id, session_store=userdata)
+    plan = plan_session(
+        settings,
+        identity.restaurant_id,
+        session_store=userdata,
+        restaurant_name=restaurant_name,
+    )
     dispatcher = plan.dispatcher
     agent = build_restaurant_agent(
         instructions=plan.instructions,

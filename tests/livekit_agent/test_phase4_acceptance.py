@@ -19,7 +19,7 @@ def test_phase4_readiness_reports_missing_env():
     assert "LIVEKIT_API_SECRET" in report.missing
     assert "LLM_BASE_URL" in report.missing
     assert "LLM_MODEL" in report.missing
-    assert any("tools" in item for item in report.blockers)
+    assert any("VOICE_TOOLS_PROFILE" in item for item in report.blockers)
 
 
 def test_phase4_readiness_passes_when_config_complete():
@@ -80,3 +80,17 @@ def test_phase4_allows_reservation_profile_in_test():
     report = phase4_readiness(settings)
     assert report.ready is True
     assert report.blockers == []
+
+
+def test_phase4_allows_full_profile():
+    settings = LiveKitSettings(
+        _env_file=None,
+        livekit_url="ws://127.0.0.1:7880",
+        llm_base_url="http://127.0.0.1:8000/v1",
+        llm_model="mistral-7b",
+        livekit_api_key="devkey",
+        livekit_api_secret="secret",
+        voice_tools_enabled=True,
+        voice_tools_profile="full",
+    )
+    assert phase4_readiness(settings).ready is True
