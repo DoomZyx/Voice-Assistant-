@@ -31,3 +31,17 @@ def test_resample_length():
     pcm = np.arange(8000, dtype=np.int16)
     out = resample_pcm16(pcm, 8000, 16000)
     assert 15900 < out.size < 16100
+
+
+def _tone(freq_hz: float, rate: int, seconds: float = 0.25) -> np.ndarray:
+    t = np.arange(int(rate * seconds)) / rate
+    return (np.sin(2 * np.pi * freq_hz * t) * 10000).astype(np.int16)
+
+
+def test_downsample_24k_to_8k_rejects_energy_above_telephone_band():
+    voice = resample_pcm16(_tone(1000, 24000), 24000, 8000)
+    alias = resample_pcm16(_tone(7000, 24000), 24000, 8000)
+    voice_rms = float(np.sqrt(np.mean(voice.astype(np.float32) ** 2)))
+    alias_rms = float(np.sqrt(np.mean(alias.astype(np.float32) ** 2)))
+    assert voice_rms > 1000
+    assert alias_rms < 0.15 * voice_rms
