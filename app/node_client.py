@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -19,6 +19,32 @@ class NodeApiError(Exception):
         super().__init__(message)
         self.status_code = status_code
         self.payload = payload
+
+
+def resolve_call_api_base(header: str | None, settings: Settings) -> str:
+    """Retourne l'API Fastify de cet appel, ou NODE_BASE_URL si l'en-tête est refusé."""
+    default = settings.node_base_url.rstrip("/")
+    candidate = str(header or "").strip().rstrip("/")
+    if not candidate or candidate == default:
+        return default
+    allowed = {default}
+    for item in settings.node_api_base_allowlist.split(","):
+        cleaned = item.strip().rstrip("/")
+        if cleaned:
+            allowed.add(cleaned)
+    if candidate not in allowed:
+        return default
+    parsed = urlsplit(candidate)
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or parsed.path not in ("", "/")
+    ):
+        return default
+    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 class NodeApiClient:

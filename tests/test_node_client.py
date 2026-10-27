@@ -2,7 +2,7 @@ import httpx
 import pytest
 
 from app.config import Settings
-from app.node_client import NodeApiClient, NodeApiError
+from app.node_client import NodeApiClient, NodeApiError, resolve_call_api_base
 
 
 def _handler(request: httpx.Request) -> httpx.Response:
@@ -168,3 +168,30 @@ async def test_report_call_ended(client: NodeApiClient):
     )
     assert data["success"] is True
     assert data["persisted"] is False
+
+
+def test_resolve_call_api_base_keeps_default_when_header_is_unknown():
+    settings = Settings(
+        node_base_url="https://app.api.mysmartfood.fr",
+        node_api_base_allowlist="https://preprod.api.mysmartfood.fr",
+    )
+    assert resolve_call_api_base(None, settings) == "https://app.api.mysmartfood.fr"
+    assert (
+        resolve_call_api_base("https://evil.example", settings)
+        == "https://app.api.mysmartfood.fr"
+    )
+    assert (
+        resolve_call_api_base("https://preprod.api.mysmartfood.fr/api", settings)
+        == "https://app.api.mysmartfood.fr"
+    )
+
+
+def test_resolve_call_api_base_accepts_allowlisted_https_origin():
+    settings = Settings(
+        node_base_url="https://app.api.mysmartfood.fr",
+        node_api_base_allowlist="https://preprod.api.mysmartfood.fr",
+    )
+    assert (
+        resolve_call_api_base("https://preprod.api.mysmartfood.fr/", settings)
+        == "https://preprod.api.mysmartfood.fr"
+    )

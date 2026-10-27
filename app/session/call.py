@@ -24,7 +24,8 @@ from app.audio.preprocess import apply_preprocess
 from app.audio.resample import resample_pcm16
 from app.llm import LLMResult
 from app.llm.tools import LLM_TOOLS
-from app.node_client import NodeApiError
+from app.node_client import NodeApiClient, NodeApiError, resolve_call_api_base
+from app.tools.dispatcher import ToolDispatcher
 from app.observability import emit_event, sanitize_log_fields
 from app.prompts import build_agent_instructions
 from app.session.bootstrap import (
@@ -77,6 +78,22 @@ class CallSession:
         self._media_in = 0
         self._media_out = 0
         self._vad = runtime.vad_model.new_session(runtime.settings) if runtime.vad_model else None
+        headers = getattr(websocket, "headers", None) if websocket is not None else None
+        api_base = resolve_call_api_base(
+            headers.get("x-mysmartfood-api-base") if headers is not None else None,
+            runtime.settings,
+        )
+        default_base = runtime.settings.node_base_url.rstrip("/")
+        self._owns_node = api_base != default_base
+        if self._owns_node:
+            self._node = NodeApiClient(
+                runtime.settings.model_copy(update={"node_base_url": api_base})
+            )
+            self._dispatcher = ToolDispatcher(self._node)
+            logger.info("step=api.base host=%s", api_base)
+        else:
+            self._node = runtime.node
+            self._dispatcher = runtime.dispatcher
         self._context_ready = False
         self._pending_user = ""
         self._incomplete_task: asyncio.Task | None = None
@@ -183,6 +200,8 @@ class CallSession:
         self._assistant_speaking = False
         self._ws = None
         await self._report_hangup(hangup_payload)
+        if self._owns_node:
+            await self._node.aclose()
         self._log(
             "session.close",
             reason=reason,
@@ -198,7 +217,7 @@ class CallSession:
         plan = await build_call_plan(
             data,
             self._runtime.settings,
-            self._runtime.node,
+            self._node,
             self._runtime.telemetry,
         )
         start = data.get("start") or {}
@@ -591,7 +610,7 @@ class CallSession:
                             name=call.name,
                         )
                         tool_started = time.perf_counter()
-                        tool_result = await self._runtime.dispatcher.dispatch(
+                        tool_result = await self._dispatcher.dispatch(
                             call.name,
                             call.arguments,
                             self.instance_id,
@@ -768,7 +787,7 @@ class CallSession:
         if provider not in {"vllm", "openai"}:
             provider = "vllm"
         try:
-            await self._runtime.node.report_usage(
+            await self._node.report_usage(
                 {
                     "instanceId": self.instance_id,
                     "source": "voice",
@@ -819,7 +838,7 @@ class CallSession:
     async def _report_hangup(self, payload: dict[str, Any] | None) -> None:
         if not payload:
             return
-        report = getattr(self._runtime.node, "report_call_ended", None)
+        report = getattr(self._node, "report_call_ended", None)
         if not callable(report):
             return
         try:

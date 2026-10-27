@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     node_base_url: str = "http://localhost:8080"
     node_api_key: str = ""
+    # Hotes Fastify autorises pour un appel, en plus de NODE_BASE_URL.
+    node_api_base_allowlist: str = ""
     twilio_auth_token: str = ""
 
     llm_provider: str = "vllm"
